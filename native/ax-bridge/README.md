@@ -48,7 +48,11 @@ A malformed line answers with `id: -1` and `BAD_REQUEST` rather than crashing or
 | `NO_SUCH_SUBSCRIPTION` | unknown `subscription` |
 | `AX_ERROR(<n>)` | the AX API failed; `<n>` is the raw `AXError` value, name in `message` |
 | `BAD_REQUEST` | missing/ill-typed parameter, unknown op, malformed JSON |
+| `NO_FRAME` | the element exposes no usable `AXPosition`/`AXSize` to click |
 | `CG_ERROR` / `INTERNAL` | CGEvent construction failure / unexpected Swift error |
+
+`AX_ERROR` is parameterized — the numeric `AXError` is part of the code, so a
+client switching on codes must match the prefix rather than the whole string.
 
 ### Operations
 

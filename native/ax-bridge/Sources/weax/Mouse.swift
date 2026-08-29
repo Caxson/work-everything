@@ -9,10 +9,21 @@ import Foundation
 /// coordinate. Posting them to a pid instead makes clicks land nowhere and focus fail
 /// silently. Keyboard events are the reverse — see `Actions.keystroke`.
 enum Mouse {
-    private static let buttons: [String: (down: CGEventType, up: CGEventType, button: CGMouseButton)] = [
-        "left": (.leftMouseDown, .leftMouseUp, .left),
-        "right": (.rightMouseDown, .rightMouseUp, .right),
-        "center": (.otherMouseDown, .otherMouseUp, .center)
+    private struct ButtonSpec {
+        let down: CGEventType
+        let up: CGEventType
+        let button: CGMouseButton
+        let downName: String
+        let upName: String
+    }
+
+    private static let buttons: [String: ButtonSpec] = [
+        "left": ButtonSpec(down: .leftMouseDown, up: .leftMouseUp, button: .left,
+                           downName: "leftMouseDown", upName: "leftMouseUp"),
+        "right": ButtonSpec(down: .rightMouseDown, up: .rightMouseUp, button: .right,
+                            downName: "rightMouseDown", upName: "rightMouseUp"),
+        "center": ButtonSpec(down: .otherMouseDown, up: .otherMouseUp, button: .center,
+                             downName: "otherMouseDown", upName: "otherMouseUp")
     ]
 
     /// Screen point at the centre of a node's frame, in the top-left origin space that
@@ -47,7 +58,7 @@ enum Mouse {
             "button": .string(button.lowercased()), "clickCount": .int(clickCount),
             "flags": .int(Int(flags.rawValue)),
             "tap": .string("cghidEventTap"),
-            "events": .array([.string("mouseMoved"), .string("\(spec.down)"), .string("\(spec.up)")])
+            "events": .array([.string("mouseMoved"), .string(spec.downName), .string(spec.upName)])
         ])
         guard !dryRun else { return .object(["ok": .bool(true), "dryRun": .bool(true), "plan": plan]) }
 
@@ -72,8 +83,7 @@ enum Mouse {
         return flags
     }
 
-    private static func post(source: CGEventSource, point: CGPoint,
-                             spec: (down: CGEventType, up: CGEventType, button: CGMouseButton),
+    private static func post(source: CGEventSource, point: CGPoint, spec: ButtonSpec,
                              clickCount: Int, flags: CGEventFlags) throws {
         guard let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
                                  mouseCursorPosition: point, mouseButton: spec.button) else {
