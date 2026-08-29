@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLineDecoder, decodeMessage, encodeRequest } from '../src/perception/macos/axProtocol.js';
+import { AxNodeSchema, createLineDecoder, decodeMessage, encodeRequest } from '../src/perception/macos/axProtocol.js';
 
 describe('ax protocol codec', () => {
   it('encodes a request as one newline-terminated object', () => {
@@ -46,5 +46,23 @@ describe('ax protocol codec', () => {
 
   it('ignores blank lines between messages', () => {
     expect(createLineDecoder()('\n\n{"a":1}\n')).toEqual(['{"a":1}']);
+  });
+});
+
+describe('AxNodeSchema scalar coercion', () => {
+  it('renders non-string AX attribute values as text instead of rejecting the node', () => {
+    const node = AxNodeSchema.parse({
+      nodeId: 15,
+      role: 'AXCheckBox',
+      title: 'notify',
+      value: true,
+      children: [{ nodeId: 16, role: 'AXSlider', value: 0.5 }],
+    });
+    expect(node.value).toBe('true');
+    expect(node.children?.[0]?.value).toBe('0.5');
+  });
+
+  it('keeps a real string value untouched', () => {
+    expect(AxNodeSchema.parse({ nodeId: 1, role: 'AXStaticText', value: 'hi' }).value).toBe('hi');
   });
 });

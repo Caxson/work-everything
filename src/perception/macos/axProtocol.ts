@@ -65,15 +65,26 @@ export interface AxNode {
   readonly children?: readonly AxNode[] | undefined;
 }
 
+/**
+ * An AX attribute the bridge coerces from a live `CFTypeRef`: usually a string,
+ * but a checkbox's value is a boolean, a slider's a number, and so on. The node
+ * parse used to reject the moment any such attribute came back non-string, which
+ * sank the entire snapshot over one toggle deep in the tree. Accept every scalar
+ * and render it as text.
+ */
+const AxText = z
+  .union([z.string(), z.boolean(), z.number()])
+  .transform((raw) => (typeof raw === 'string' ? raw : String(raw)));
+
 export const AxNodeSchema: z.ZodType<AxNode, z.ZodTypeDef, unknown> = z.lazy(() =>
   z.object({
     nodeId: z.number().int(),
     role: z.string(),
-    subrole: z.string().optional(),
-    title: z.string().optional(),
-    value: z.string().optional(),
-    description: z.string().optional(),
-    identifier: z.string().optional(),
+    subrole: AxText.optional(),
+    title: AxText.optional(),
+    value: AxText.optional(),
+    description: AxText.optional(),
+    identifier: AxText.optional(),
     domId: z.string().optional(),
     domClasses: z.array(z.string()).optional(),
     depth: z.number().int().optional(),
