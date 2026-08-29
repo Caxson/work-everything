@@ -1,0 +1,786 @@
+[0] AXWindow sub='AXStandardWindow' title='飞书'
+  [1] AXGroup title='飞书' cls=RootView
+    [2] AXGroup desc='ContentsView' cls=NonClientView
+      [3] AXGroup cls=NativeFrameViewMac
+        [4] AXGroup desc='ClientView' cls=LarkClientView
+          [5] AXGroup desc='MainWidgetDelegateView' cls=BrowserView
+            [6] AXGroup title='BrowserUserView' cls=BrowserUserViewImpl
+              [7] AXGroup desc='TabContensView' cls=TabContentsView
+                [8] AXGroup desc='MultiWebView - messenger' cls=MultiWebView
+                  [9] AXWebArea title='messenger'
+                    [10] AXGroup #root
+                      [11] AXGroup cls=edb023db.a47e7ea4
+                      [11] AXGroup cls=_2af668a
+                        [12] AXGroup cls=_67ea446
+                          [13] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-sm.a11y_feed_header_menu_button._69e934d
+                            [14] AXImage
+                          [13] AXGroup cls=_3b57b12
+                            [14] AXStaticText val='消息'
+                        [12] AXGroup cls=f560569f
+                          [13] AXGroup cls=feed-quickswitch.feed-shortcuts-quickswitch.count-9.less-than-one-row.inmiddle.marginBottom
+                            [14] AXGroup cls=feed-shortcut-list.ud__scrollArea-simplebar
+                              [15] AXGroup cls=simplebar-height-auto-observer-wrapper
+                                [16] AXGroup cls=simplebar-height-auto-observer
+                              [15] AXGroup cls=simplebar-mask
+                                [16] AXGroup cls=simplebar-offset
+                                  [17] AXGroup sub='AXLandmarkRegion' desc='scrollable content' cls=simplebar-content-wrapper
+                                    [18] AXGroup sub='AXApplicationGroup' cls=feed-shortcut-item
+                                      [19] AXGroup
+                                        [20] AXGroup
+                                          [21] AXGroup cls=avatarWithBadge
+                                            [22] AXGroup
+                                          [21] AXGroup cls=_7f63205
+                                            [22] AXStaticText val='wakaka'
+                                    [18] AXGroup sub='AXApplicationGroup' cls=feed-shortcut-item
+                                      [19] AXGroup
+                                        [20] AXGroup
+                                          [21] AXGroup cls=avatarWithBadge
+                                            [22] AXGroup
+                                          [21] AXGroup cls=_7f63205
+                                            [22] AXStaticText val='Ali'
+                          [13] AXGroup cls=scroller.feed-main-list.a11y_feed_main_list.lark_feedMainList
+                            [14] AXGroup
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd._2a5a61c
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457._2a5a61c
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='曹良欢（Sion）'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='15:02'
+                                      [19] AXStaticText val='[work-everything spike] hello'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7.bdd6c357
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='Ali'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='8月27日'
+                                      [19] AXStaticText val='[agent-media-loop] X 曝光日报：扫 7 条，匹配 0 条 缺 URL 未追踪 62 条（#5, #6, #8, #9, #10…），多为 8-19 前的历史批量…'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='智能纪要助手'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='8月22日'
+                                      [19] AXStaticText val='妙记已生成'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXImage desc='doubao avatar' cls=ud__avatar__image
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='豆包'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='8月22日'
+                                      [19] AXStaticText val='你说的应该是 会议录音 + 自动生成文字总结/纪要 的功能，分两种情况说： 如果你用的是飞书会议 进入飞书会议后，点击底部工具栏的 「录制」 按钮 选择 「云录制」 （会同时录画面…'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='账号安全中心'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='8月21日'
+                                      [19] AXStaticText val='安全登录通知'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup sub='AXSuperscriptStyleGroup' cls=ud__badge__badge.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.u1hd9hm2.u1euv43f.u1wirg6b.uqzzkal.unmn6fi.ud__badge-topRight.ud__badge-neutral-filled
+                                          [21] AXStaticText val='6'
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='曹良欢的飞书助手'
+                                      [19] AXGroup cls=ud__tag.ud__tag-xs.ud__tag-rect.ud__tag-blue.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='官方'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='8月18日'
+                                      [19] AXStaticText val='飞书助手'
+                                      [19] AXStaticText val=': '
+                                      [19] AXStaticText val='告别手动改 AI 半成品！豆包+飞书 自动跑完端到端工作流[惊喜特惠][超低门槛]'
+                                      [19] AXImage
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='wakaka'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='7月30日'
+                                      [19] AXStaticText val='📰 每日AI早报 | 2026年07月30日'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='曹森的智能伙伴'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-purple.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='智能体'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='7月23日'
+                                      [19] AXStaticText val='👋 aily 焕新升级，你的AI 同事来啦！[work agent 能力升级]'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='云文档助手'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='7月1日'
+                                      [19] AXStaticText val='权限申请'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXImage
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='空中openllm 接口文档'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-blue.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='外部'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='6月25日'
+                                      [19] AXStaticText val='张益君分享文档给你'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXImage
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='产品'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-blue.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='外部'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='4月25日'
+                                      [19] AXStaticText val='irony: 刘翼'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXImage desc='要获取缺失的图片说明，请打开上下文菜单。' cls=ud__avatar__image
+                                        [20] AXGroup sub='AXSuperscriptStyleGroup' cls=ud__badge__badge.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.u1hd9hm2.u1euv43f.u1wirg6b.uqzzkal.unmn6fi.ud__badge-topRight.ud__badge-neutral-filled.ud__badge-filled
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='折叠的会话'
+                                      [19] AXStaticText val='ClawdBot-1群（Teamo托管） 有新消息'
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='开发者小助手'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='5月7日'
+                                      [19] AXStaticText val='应用审批通过，已发布成功'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='三角'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='2025年6月11日'
+                                      [19] AXStaticText val='但是动植物市场上没有'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='胡心锋'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='2025年6月10日'
+                                      [19] AXStaticText val='边写边译已关闭'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='养植物提醒app项目组'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='2025年6月3日'
+                                      [19] AXStaticText val='曹良欢（Sion）'
+                                      [19] AXStaticText val=': '
+                                      [19] AXGroup #GLANCE cls=larkw-emoji__wrapper
+                                        [20] AXImage desc='看' cls=larkw-emoji__img--emoji-glance.larkw-emoji__img
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='联系人助手'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='2025年6月3日'
+                                      [19] AXStaticText val='联系人申请'
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                            [14] AXGroup
+                              [15] AXGroup cls=_13e3ffd
+                                [16] AXGroup cls=a11y_feed_card_item._1e0a457
+                                  [17] AXGroup cls=c90c31ea
+                                    [18] AXGroup cls=c7ac3851
+                                      [19] AXGroup cls=avatarWithBadge
+                                        [20] AXGroup
+                                      [19] AXGroup cls=_9f5c521
+                                        [20] AXStaticText val='假勤'
+                                      [19] AXGroup cls=ud__tag.larkw-tag.ud__tag-xs.ud__tag-rect.ud__tag-yellow.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1g0x7ka.u8wuabp.u1qch9an.uycuoez.u8wkphi.uwsfkhu.uff7au0.u1bjk9e1.u113hnb5.utuwxu6.u122n59.uz5stix.u7o03ib.u15l5c9n.u6dzj5z.uw295qw.unmn6fi.ud461yt.u1a3p1vp
+                                        [20] AXGroup cls=ud__tag__content.ud-typography-caption-1.utgm304.u1ewtqcl.u1lmfglv.uibjyge.u1abmfm4.u9yszdx.u1nbblvp.uifp7yv.u1ov4xf1.u1asdtw4.uiy7161.uz5stix.u1a3p1vp.u1cmbuwj.u1ugzwwg.ul9ro5r.uee9c6b.u1hsvuyd.u1hd9hm2
+                                          [21] AXStaticText val='机器人'
+                                      [19] AXGroup cls=_97ba617
+                                        [20] AXStaticText val='2025年2月28日'
+                                      [19] AXStaticText val='缺卡提醒'
+                                      [19] AXImage
+                                      [19] AXGroup cls=_717cd67
+                                        [20] AXGroup cls=_8aedca7
+                                          [21] AXGroup cls=a11y_feed_item_done
+                                            [22] AXImage
+                    [10] AXGroup #__overlay-container__
+                      [11] AXGroup #__larkc-modall-container__
+                    [10] AXGroup #pp_popupContainer
+                [8] AXGroup desc='MultiWebView - messenger:messenger-chat:default' cls=MultiWebView
+                  [9] AXWebArea title='messenger-chat'
+                    [10] AXGroup cls=larkc-zh-CN.ud__lang-zh
+                      [11] AXGroup #root
+                        [12] AXGroup #messenger cls=mac
+                          [13] AXGroup cls=lark-chat.main-box
+                            [14] AXGroup cls=lark-chat-right-box.js-lark-chat-right-box
+                              [15] AXGroup cls=lark-chat-right
+                                [16] AXGroup cls=chatContainer.post-container.p2pChat
+                                  [17] AXGroup cls=chatSidebar
+                                    [18] AXGroup cls=chatSidebar_content
+                                      [19] AXGroup cls=chatContainer_contentWrapper
+                                        [20] AXGroup cls=chatContainer__headerWrapper
+                                          [21] AXGroup cls=chatNewWindow_headerMain
+                                            [22] AXGroup cls=chatWindow_avatar_wrapper
+                                              [23] AXGroup cls=chatWindow_avatar
+                                                [24] AXGroup cls=ud__avatar.ud__avatar-filled.ud__avatar-circle.ud__avatar-image.larkc-avatar.larkw-avatar.lark-drag-disable
+                                                  [25] AXGroup
+                                            [22] AXGroup cls=chatWindow_chatName.lark-drag-disable
+                                              [23] AXStaticText val='曹良欢（Sion）'
+                                            [22] AXGroup cls=chatWindow_header_metas
+                                              [23] AXGroup cls=groups-container.groups-container-split
+                                            [22] AXGroup cls=collapse-buttons.chatWindow_rightOperator.lark-drag-disable
+                                              [23] AXGroup cls=collapse-buttons__container
+                                                [24] AXGroup cls=header_right_icon
+                                                  [25] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-sm.operatorIcon
+                                                    [26] AXImage
+                                                [24] AXGroup cls=header_right_icon
+                                                  [25] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-sm.operatorIcon
+                                                    [26] AXImage
+                                                [24] AXGroup cls=header_right_icon
+                                                  [25] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-sm.operatorIcon
+                                                    [26] AXImage
+                                                [24] AXGroup cls=header_right_icon
+                                                  [25] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-sm.operatorIcon
+                                                    [26] AXImage
+                                            [22] AXGroup cls=ud__overflow
+                                              [23] AXGroup cls=chat-tab-item.chat-tab-active
+                                                [24] AXImage
+                                                [24] AXGroup cls=chat-tab-name
+                                                  [25] AXStaticText val='消息'
+                                              [23] AXGroup cls=chat-tab-item
+                                                [24] AXImage
+                                                [24] AXGroup cls=chat-tab-name
+                                                  [25] AXStaticText val='文件'
+                                              [23] AXGroup cls=tab-add-operation
+                                                [24] AXGroup cls=universe-icon.tab-add-icon
+                                                  [25] AXImage
+                                              [23] AXGroup cls=ud__overflow__rest
+                                                [24] AXGroup cls=tabs-bar-more
+                                                  [25] AXImage
+                                        [20] AXGroup cls=chatSidebar
+                                          [21] AXGroup cls=chatSidebar_content
+                                            [22] AXGroup cls=larkw-drag-panel
+                                              [23] AXGroup cls=chatBanners.optimize
+                                              [23] AXGroup cls=chatMessageContainer
+                                                [24] AXGroup cls=chatHeaderNav
+                                                [24] AXGroup cls=chatMessages
+                                                  [25] AXGroup cls=messageContainer
+                                                    [26] AXGroup cls=scroller
+                                                      [27] AXGroup cls=scroll_holder
+                                                      [27] AXGroup cls=list_items
+                                                        [28] AXGroup cls=messageList-header
+                                                          [29] AXGroup cls=d9a56590
+                                                            [30] AXStaticText val='超过 18 个月的消息已被自动清理，群组创建者升级到付费版本后可保留更多消息'
+                                                        [28] AXGroup
+                                                          [29] AXGroup cls=divider.date-divider.messageItem-divider
+                                                            [30] AXStaticText val='3月12日'
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper.message-last
+                                                            [30] AXGroup #7616028639817157825 cls=js-message-item.message-item.message-self.message-item-first.message-is-p2p.text-message
+                                                              [31] AXGroup cls=message-left
+                                                                [32] AXGroup cls=cursor-pointer.noselect
+                                                                  [33] AXGroup cls=ud__avatar.ud__avatar-filled.ud__avatar-circle.ud__avatar-image.larkc-avatar.larkw-avatar
+                                                                    [34] AXGroup
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7616028639817157825 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=catch-resize-observer-dom.message-content
+                                                                      [35] AXGroup cls=limit-height-container
+                                                                        [36] AXGroup cls=richTextContainer.text-align-left
+                                                                          [37] AXLink desc='https://www.qbitai.com/2026/03/386114.html' cls=link.rich-text-anchor.__anchor-intercept-flag__
+                                                                            [38] AXStaticText val='https://www.qbitai.com/2026/03/386114.html'
+                                                                    [34] AXGroup cls=open-url-preview__element.message-feature__open-url-preview_clickable
+                                                                      [35] AXGroup
+                                                                        [36] AXGroup cls=base-image.messenger-image
+                                                                          [37] AXImage desc='/v3_00vk_9b8bb5c2-1bd4-4895-b811-7613632a5fag~?image_size=noop&cut_type=&quality=&format=i…' cls=messenger-image__img--transparent-bg.base-image__content
+                                                                        [36] AXGroup cls=header__title-text
+                                                                          [37] AXStaticText val='www.qbitai.com'
+                                                                        [36] AXGroup cls=header__toolbar__item
+                                                                          [37] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-sm
+                                                                            [38] AXImage
+                                                                        [36] AXGroup cls=open-url-preview__element__text
+                                                                          [37] AXStaticText val='ChatGPT和Claude争了个寂寞！用户重叠仅11%，中国应用霸榜移动端'
+                                                                        [36] AXGroup cls=open-url-preview__element__text
+                                                                          [37] AXStaticText val='a16z发布Top100 GenAI应用榜'
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                        [28] AXGroup
+                                                          [29] AXGroup cls=divider.date-divider.messageItem-divider
+                                                            [30] AXStaticText val='6月1日'
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper.message-last
+                                                            [30] AXGroup #7646386714113510348 cls=js-message-item.message-item.message-self.message-item-first.message-is-p2p.file-message
+                                                              [31] AXGroup cls=message-left
+                                                                [32] AXGroup cls=cursor-pointer.noselect
+                                                                  [33] AXGroup cls=ud__avatar.ud__avatar-filled.ud__avatar-circle.ud__avatar-image.larkc-avatar.larkw-avatar
+                                                                    [34] AXGroup
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7646386714113510348 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=message-content.catch-resize-observer-dom
+                                                                      [35] AXGroup cls=messageFile.newMessageFile
+                                                                        [36] AXGroup cls=messageFile_icon
+                                                                          [37] AXImage
+                                                                        [36] AXGroup cls=messageFile_content
+                                                                          [37] AXGroup cls=messageFile_filename
+                                                                            [38] AXStaticText val='CLAUDE.md'
+                                                                          [37] AXGroup cls=messageFile_detailText
+                                                                            [38] AXStaticText val='9.0 KB'
+                                                                      [35] AXGroup cls=messageFileWithSnapshotArea_previewImage
+                                                                        [36] AXGroup cls=preview-image
+                                                                          [37] AXGroup cls=message-feature__open-url-preview
+                                                                            [38] AXGroup cls=open-url-preview__element.message-feature__open-url-preview_clickable
+                                                                              [39] AXGroup
+                                                                                [40] AXGroup
+                                                                                  [41] AXGroup
+                                                                                    [42] AXGroup cls=open-url-preview__element__doc-image
+                                                                                      [43] AXGroup cls=open-url-preview__element__doc-image-inner
+                                                                                        [44] AXImage desc='/7ead10f5-25a4-4827-a6ca-753b389054a4' cls=img
+                                                                      [35] AXGroup cls=messageFile_options.hoverShow
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                        [28] AXGroup
+                                                          [29] AXGroup cls=divider.date-divider.messageItem-divider
+                                                            [30] AXStaticText val='6月2日'
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper.message-last
+                                                            [30] AXGroup #7646755480504634341 cls=js-message-item.message-item.message-self.message-item-first.message-is-p2p.file-message
+                                                              [31] AXGroup cls=message-left
+                                                                [32] AXGroup cls=cursor-pointer.noselect
+                                                                  [33] AXGroup cls=ud__avatar.ud__avatar-filled.ud__avatar-circle.ud__avatar-image.larkc-avatar.larkw-avatar
+                                                                    [34] AXGroup
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7646755480504634341 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=message-content.catch-resize-observer-dom
+                                                                      [35] AXGroup cls=messageFile.newMessageFile
+                                                                        [36] AXGroup cls=messageFile_icon
+                                                                          [37] AXImage
+                                                                        [36] AXGroup cls=messageFile_content
+                                                                          [37] AXGroup cls=messageFile_filename
+                                                                            [38] AXStaticText val='曹森-AI-2026.md'
+                                                                          [37] AXGroup cls=messageFile_detailText
+                                                                            [38] AXStaticText val='13.1 KB'
+                                                                      [35] AXGroup cls=messageFileWithSnapshotArea_previewImage
+                                                                        [36] AXGroup cls=preview-image
+                                                                          [37] AXGroup cls=message-feature__open-url-preview
+                                                                            [38] AXGroup cls=open-url-preview__element.message-feature__open-url-preview_clickable
+                                                                              [39] AXGroup
+                                                                                [40] AXGroup
+                                                                                  [41] AXGroup
+                                                                                    [42] AXGroup cls=open-url-preview__element__doc-image
+                                                                                      [43] AXGroup cls=open-url-preview__element__doc-image-inner
+                                                                                        [44] AXImage desc='/8365c6ce-820a-4abf-baf0-280b2aac6b09' cls=img
+                                                                      [35] AXGroup cls=messageFile_options.hoverShow
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup
+                                                        [28] AXGroup
+                                                          [29] AXGroup cls=divider.date-divider.messageItem-divider
+                                                            [30] AXStaticText val='6月3日'
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper
+                                                            [30] AXGroup #7647174594842856414 cls=js-message-item.message-item.message-self.message-item-first.message-is-p2p.file-message
+                                                              [31] AXGroup cls=message-left
+                                                                [32] AXGroup cls=cursor-pointer.noselect
+                                                                  [33] AXGroup cls=ud__avatar.ud__avatar-filled.ud__avatar-circle.ud__avatar-image.larkc-avatar.larkw-avatar
+                                                                    [34] AXGroup
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7647174594842856414 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=message-content.catch-resize-observer-dom
+                                                                      [35] AXGroup cls=messageFile.newMessageFile
+                                                                        [36] AXGroup cls=messageFile_icon
+                                                                          [37] AXImage
+                                                                        [36] AXGroup cls=messageFile_content
+                                                                          [37] AXGroup cls=messageFile_filename
+                                                                            [38] AXStaticText val='曹森-AI-2026.md'
+                                                                          [37] AXGroup cls=messageFile_detailText
+                                                                            [38] AXStaticText val='13.8 KB'
+                                                                      [35] AXGroup cls=messageFileWithSnapshotArea_previewImage
+                                                                        [36] AXGroup cls=preview-image
+                                                                          [37] AXGroup cls=message-feature__open-url-preview
+                                                                            [38] AXGroup cls=open-url-preview__element.message-feature__open-url-preview_clickable
+                                                                              [39] AXGroup
+                                                                                [40] AXGroup
+                                                                                  [41] AXGroup
+                                                                                    [42] AXGroup cls=open-url-preview__element__doc-image
+                                                                                      [43] AXGroup cls=open-url-preview__element__doc-image-inner
+                                                                                        [44] AXImage desc='/fca6f661-e52a-49c0-90a3-7b5b57ac4abd' cls=img
+                                                                      [35] AXGroup cls=messageFile_options.hoverShow
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper
+                                                            [30] AXGroup #7647175785295399894 cls=js-message-item.message-item.message-self.message-is-p2p.file-message
+                                                              [31] AXGroup cls=message-left
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7647175785295399894 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=message-content.catch-resize-observer-dom
+                                                                      [35] AXGroup cls=messageFile.newMessageFile
+                                                                        [36] AXGroup cls=messageFile_icon
+                                                                          [37] AXImage
+                                                                        [36] AXGroup cls=messageFile_content
+                                                                          [37] AXGroup cls=messageFile_filename
+                                                                            [38] AXStaticText val='曹森-AI-2026.md'
+                                                                          [37] AXGroup cls=messageFile_detailText
+                                                                            [38] AXStaticText val='13.8 KB'
+                                                                      [35] AXGroup cls=messageFileWithSnapshotArea_previewImage
+                                                                        [36] AXGroup cls=preview-image
+                                                                          [37] AXGroup cls=message-feature__open-url-preview
+                                                                            [38] AXGroup cls=open-url-preview__element.message-feature__open-url-preview_clickable
+                                                                              [39] AXGroup
+                                                                                [40] AXGroup
+                                                                                  [41] AXGroup
+                                                                                    [42] AXGroup cls=open-url-preview__element__doc-image
+                                                                                      [43] AXGroup cls=open-url-preview__element__doc-image-inner
+                                                                                        [44] AXImage desc='/b8c5ffeb-3b54-42aa-ab74-4b8a6a71794f' cls=img
+                                                                      [35] AXGroup cls=messageFile_options.hoverShow
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper.message-last
+                                                            [30] AXGroup #7647175860511853545 cls=js-message-item.message-item.message-self.message-is-p2p.file-message
+                                                              [31] AXGroup cls=message-left
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7647175860511853545 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=message-content.catch-resize-observer-dom
+                                                                      [35] AXGroup cls=messageFile.newMessageFile
+                                                                        [36] AXGroup cls=messageFile_icon
+                                                                          [37] AXImage
+                                                                        [36] AXGroup cls=messageFile_content
+                                                                          [37] AXGroup cls=messageFile_filename
+                                                                            [38] AXStaticText val='曹森-AI-字节豆包-2026.md'
+                                                                          [37] AXGroup cls=messageFile_detailText
+                                                                            [38] AXStaticText val='9.6 KB'
+                                                                      [35] AXGroup cls=messageFileWithSnapshotArea_previewImage
+                                                                        [36] AXGroup cls=preview-image
+                                                                          [37] AXGroup cls=message-feature__open-url-preview
+                                                                            [38] AXGroup cls=open-url-preview__element.message-feature__open-url-preview_clickable
+                                                                              [39] AXGroup
+                                                                                [40] AXGroup
+                                                                                  [41] AXGroup
+                                                                                    [42] AXGroup cls=open-url-preview__element__doc-image
+                                                                                      [43] AXGroup cls=open-url-preview__element__doc-image-inner
+                                                                                        [44] AXImage desc='/de9a4deb-66e0-4d9f-8a28-0cc7ac0166d3' cls=img
+                                                                      [35] AXGroup cls=messageFile_options.hoverShow
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                        [36] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.messageFile_options_icon
+                                                                          [37] AXImage
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                        [28] AXGroup
+                                                          [29] AXGroup cls=divider.date-divider.messageItem-divider
+                                                            [30] AXStaticText val='15:02'
+                                                        [28] AXGroup cls=messageList-row-wrapper
+                                                          [29] AXGroup cls=messageItem-wrapper.message-last
+                                                            [30] AXGroup #7679345486104415420 cls=js-message-item.message-item.message-self.message-item-first.message-is-p2p.text-message
+                                                              [31] AXGroup cls=message-left
+                                                                [32] AXGroup cls=cursor-pointer.noselect
+                                                                  [33] AXGroup cls=ud__avatar.ud__avatar-filled.ud__avatar-circle.ud__avatar-image.larkc-avatar.larkw-avatar
+                                                                    [34] AXGroup
+                                                              [31] AXGroup cls=message-right
+                                                                [32] AXGroup cls=message-section
+                                                                  [33] AXGroup #7679345486104415420 cls=NewMessageContextMenuTrigger.MessageContextMenuTrigger.MessageContextMenuTrigger--scene-chatSelfMessage.message-section-left.message-section-newFileCard
+                                                                    [34] AXGroup cls=message-content-container
+                                                                      [35] AXGroup cls=catch-resize-observer-dom.message-content
+                                                                        [36] AXGroup cls=limit-height-container
+                                                                          [37] AXGroup cls=richTextContainer.text-align-left
+                                                                            [38] AXStaticText val='[work-everything '
+                                                                            [38] AXGroup cls=text-only.text-with-abbreviation.text-with-abbreviation-bottomline
+                                                                              [39] AXStaticText val='spike'
+                                                                            [38] AXStaticText val='] hello'
+                                                                  [33] AXGroup cls=message-section-right
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                                    [34] AXGroup cls=message__align-to-first-bounded-container
+                                                            [30] AXGroup cls=messageList-bottomDetector
+                                                        [28] AXGroup cls=messageList-footer
+                                            [22] AXGroup cls=lark__editor--default.lark__editor--new.lark__editor--v2.lark__editor--simple.lark__editor--chat.lark__editor--focus
+                                              [23] AXGroup cls=outerdocbody.editor-kit-outer-container.lark__editor--showExtension
+                                                [24] AXTextArea val='可以向自己发送文件或转发消息\\n\u200b\\n\u200b\\n\u200b' cls=zone-container.editor-kit-container.innerdocbody.notranslate.chrome.chrome88
+                                                  [25] AXGroup
+                                                    [26] AXStaticText val='可以向自己发送文件或转发消息'
+                                                    [26] AXStaticText val='\u200b'
+                                                    [26] AXStaticText val='\u200b'
+                                                    [26] AXStaticText val='\u200b'
+                                              [23] AXGroup
+                                                [24] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md
+                                                  [25] AXImage
+                                              [23] AXGroup cls=toolbar-item
+                                                [24] AXGroup
+                                                  [25] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md
+                                                    [26] AXImage
+                                              [23] AXGroup cls=wrap-tip
+                                                [24] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md
+                                                  [25] AXImage
+                                              [23] AXGroup cls=toolbar-item.toolbar-item-more-button.screen-button-group
+                                                [24] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md
+                                                  [25] AXImage
+                                                  [25] AXImage
+                                              [23] AXGroup cls=toolbar-item.toolbar-item-more-button
+                                                [24] AXGroup
+                                                  [25] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md
+                                                    [26] AXImage
+                                              [23] AXGroup cls=open-inner-editor
+                                                [24] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md
+                                                  [25] AXImage
+                                              [23] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.send-button-container.send-button-container--disable
+                                                [24] AXImage
+                                              [23] AXButton cls=ud__button.ud__button--icon.ud__button--icon-default.ud__button--icon-size-md.schedule-button-container
+                                                [24] AXImage
+                                              [23] AXGroup cls=__scribing-container-root__
+                                                [24] AXGroup cls=__scribing-container-position__
+                                                  [25] AXGroup
+                                            [22] AXGroup cls=editor__tip--enter.editor__tip--hidden
+                                              [23] AXStaticText val='Shift + Enter 换行'
+                              [15] AXGroup #lark-chat-menu cls=lark-chat-menu
+                      [11] AXGroup #__overlay-container__
+                        [12] AXGroup #__just-for-test-toast-content-width-unvisible__
+                          [13] AXGroup
+                        [12] AXGroup #__larkc-toast-container-6b735a3f-9e42-4474-9df0-4a2541aaa4e2__
+                        [12] AXGroup #__larkc-modall-container__
+                        [12] AXGroup #__larkc-modall-container__CRQW
+                        [12] AXGroup cls=__smart-correction-popup-container-wrapper__.__smart-correction-popup-light__
+                          [13] AXGroup cls=__smart-correction-popup-container__
+                      [11] AXGroup
+                      [11] AXGroup #pp_popupContainer
+                      [11] AXGroup
+                        [12] AXGroup cls=ud__msg-manager.ud__msg-manager--topRight
+                        [12] AXGroup cls=ud__msg-manager.ud__msg-manager--topLeft
+                        [12] AXGroup cls=ud__msg-manager.ud__msg-manager--bottomRight
+                        [12] AXGroup cls=ud__msg-manager.ud__msg-manager--bottomLeft
+                        [12] AXGroup cls=ud__msg-manager.ud__msg-manager--top
+                      [11] AXGroup cls=editor-hyper-link-popup
+              [7] AXGroup desc='SideEdgeView' cls=SideBar
+                [8] AXGroup desc='ProfileFlexView' cls=ProfileFlexView
+                  [9] AXButton desc='ProfileButton' cls=ProfileButton
+                    [10] AXGroup cls=AvatarImageViewImpl
+                      [11] AXButton desc='我的头像' cls=AvatarButton
+                  [9] AXGroup cls=View
+                  [9] AXButton desc='创建' cls=CreationButton
+                [8] AXGroup desc='LeadingFlexView' cls=LeadingFlexView
+                  [9] AXButton desc='搜索（⌘＋K）' cls=SearchButton
+                [8] AXGroup desc='TabBarView' cls=TabBarView
+                  [9] AXGroup cls=View
+                    [10] AXTabGroup desc='TabScrollView' cls=SideBarScrollView
+                      [11] AXGroup cls=ScrollView::Viewport
+                        [12] AXScrollArea desc='TabScrollContentsView' cls=ScrollContentViewWithDock
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='消息' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='豆包工作' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='视频会议' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='日历' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='云文档' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='多维表格' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='工作台' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='通讯录' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='权益升级' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='豆包工作伙伴' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='更多' cls=GroupTabButton
+                          [13] AXGroup cls=TabSeparatorView
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='历史记录' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='AI时代的思考 - 飞书云文档' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='产品 - 飞书云文档' cls=TabButton
+                          [13] AXRadioButton sub='AXTabButton' val='False' desc='MiniMax Audio+Music使用指南 - 飞书云文档' cls=TabButton
+                      [11] AXGroup cls=ScrollView::Viewport
+                [8] AXButton cls=ViewExtension<views::ImageButton>
+                [8] AXSplitter cls=ResizeAreaView
+              [7] AXStaticText val='TitleEdgeView' cls=TitleBar
+                [8] AXStaticText cls=Label
+            [6] AXGroup cls=View
+  [1] AXToolbar
+  [1] AXButton sub='AXCloseButton'
+  [1] AXButton sub='AXFullScreenButton'
+    [2] AXGroup
+      [3] AXGroup
+  [1] AXButton sub='AXMinimizeButton'
