@@ -44,41 +44,51 @@ enum Actions {
         return .object(["nodeId": .int(nodeId), "ok": .bool(true)])
     }
 
-    static func keystroke(pid: pid_t, key: String, modifiers: [String]) throws -> JSONValue {
-        let flags = try Keyboard.flags(from: modifiers)
+    /// Sends one keystroke to `pid`.
+    ///
+    /// Two rules, both learned the hard way (see spikes/README.md):
+    ///
+    /// 1. Keyboard events go to `CGEventPostToPid`, never the HID tap. A HID-tap key
+    ///    event reaches an Electron/CEF app's *native* layer only — it fires menu
+    ///    shortcuts and navigates tabs, but not one character ever reaches the renderer.
+    ///    (Mouse events are the exact opposite; see `Mouse`.)
+    /// 2. The event source is `.privateState`, which starts with no inherited modifier
+    ///    state, and every event is posted with an explicit flag mask — zero included.
+    ///    Modifiers are additionally pressed and released with real `flagsChanged`
+    ///    events so the sequence always ends on flags == 0. Masking a flag onto a key
+    ///    event without ever releasing it latches the modifier inside the target app:
+    ///    a later plain `w` arrives as Cmd+W and closes the window.
+    static func keystroke(pid: pid_t, key: String, modifiers: [String], dryRun: Bool) throws -> JSONValue {
+        let specs = try Keyboard.plan(key: key, modifiers: modifiers)
+        let mode = specs.contains { $0.unicode != nil } ? "unicode" : "keycode"
+        let plan: JSONValue = .object([
+            "key": .string(key),
+            "mode": .string(mode),
+            "target": .string("postToPid(\(pid))"),
+            "sourceState": .string("private"),
+            "events": .array(specs.map { $0.json })
+        ])
+        guard !dryRun else { return .object(["ok": .bool(true), "dryRun": .bool(true), "plan": plan]) }
+
         guard let source = CGEventSource(stateID: .privateState) else {
             throw BridgeError(code: "CG_ERROR", message: "could not create a CGEventSource")
         }
-        if let code = Keyboard.keyCode(for: key) {
-            let shifted = flags.union(needsShift(key) ? .maskShift : [])
-            try post(source: source, code: code, flags: shifted, unicode: nil, pid: pid)
-            return .object(["ok": .bool(true), "mode": .string("keycode"), "keyCode": .int(Int(code))])
-        }
-        guard key.count >= 1, modifiers.isEmpty else {
-            throw BridgeError.badRequest("key '\(key)' has no keycode on the US layout; modifiers cannot be applied")
-        }
-        try post(source: source, code: 0, flags: flags, unicode: key, pid: pid)
-        return .object(["ok": .bool(true), "mode": .string("unicode")])
+        for spec in specs { try post(spec, source: source, pid: pid) }
+        return .object(["ok": .bool(true), "mode": .string(mode), "plan": plan])
     }
 
-    private static func needsShift(_ key: String) -> Bool {
-        key.count == 1 && key.first!.isUppercase
-    }
-
-    private static func post(source: CGEventSource, code: CGKeyCode, flags: CGEventFlags,
-                             unicode: String?, pid: pid_t) throws {
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else {
-            throw BridgeError(code: "CG_ERROR", message: "could not create key events")
+    private static func post(_ spec: KeyEventSpec, source: CGEventSource, pid: pid_t) throws {
+        let isDown = spec.kind != .keyUp
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: spec.keyCode, keyDown: isDown) else {
+            throw BridgeError(code: "CG_ERROR", message: "could not create key event for \(spec.kind)")
         }
-        down.flags = flags
-        up.flags = flags
-        if let unicode = unicode {
+        if spec.kind == .flagsChanged { event.type = .flagsChanged }
+        // Always explicit, including the empty mask — never inherit.
+        event.flags = spec.flags
+        if let unicode = spec.unicode {
             let utf16 = Array(unicode.utf16)
-            down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
-            up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+            event.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
         }
-        down.postToPid(pid)
-        up.postToPid(pid)
+        event.postToPid(pid)
     }
 }

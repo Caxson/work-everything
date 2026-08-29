@@ -11,11 +11,13 @@ swift build -c release        # requires Xcode 15+/Swift 5.9+, macOS 13+
 ./.build/release/we-ax        # reads NDJSON on stdin, writes NDJSON on stdout
 ```
 
-Smoke test (read-only, never mutates the target app):
+Two checks, both read-only — neither mutates a target app, and the input regression
+posts no event anywhere:
 
 ```bash
-OUT_DIR=/tmp/we-ax-smoke scripts/smoke.sh          # defaults to Feishu / Lark
-OUT_DIR=/tmp/we-ax-smoke scripts/smoke.sh "Safari"
+OUT_DIR=/tmp/we-ax scripts/smoke.sh              # AX inspection; defaults to Feishu / Lark
+OUT_DIR=/tmp/we-ax scripts/smoke.sh "Safari"
+OUT_DIR=/tmp/we-ax scripts/input-regression.sh   # keyboard/mouse event plans, 21 assertions
 ```
 
 ## Protocol
@@ -62,7 +64,8 @@ A malformed line answers with `id: -1` and `BAD_REQUEST` rather than crashing or
 | `setValue` | `nodeId`, `value` | `{nodeId, ok}` |
 | `press` | `nodeId`, `action?`(`AXPress`) | `{nodeId, action, ok}` |
 | `focus` | `nodeId` | `{nodeId, ok}` |
-| `keystroke` | `pid`, `key`, `modifiers?` | `{ok, mode, keyCode?}` |
+| `keystroke` | `pid`, `key`, `modifiers?`, `dryRun?` | `{ok, mode, plan}` |
+| `click` | `nodeId` \| (`x`,`y`), `button?`(`left`), `clickCount?`(1), `modifiers?`, `dryRun?` | `{ok, plan}` |
 | `observe` | `pid`, `nodeId?`, `notifications: string[]` | `{subscription, registered, failed}` |
 | `unobserve` | `subscription` | `{subscription, ok}` |
 | `shutdown` | — | `{ok}`, then the process exits |
@@ -101,15 +104,63 @@ All supplied fields must match (AND). At least one is required.
  "maxResults": 20}
 ```
 
-### Keystrokes
+### Synthetic input
 
 `key` is a named key (`return`, `enter`, `tab`, `space`, `delete`, `escape`, `left`/`right`/
 `up`/`down`, `home`, `end`, `pageup`, `pagedown`, `f1`–`f12`) or a single character on the
 US-ANSI layout. Modifiers: `cmd`, `shift`, `alt`/`option`, `ctrl`, `fn`. A character with no
 US keycode is sent as a synthesized unicode event, which cannot carry modifiers — the bridge
-returns `BAD_REQUEST` rather than silently dropping them. Events go to the target via
-`CGEvent.postToPid`, so the app does not need to be frontmost, but it does need focus for
-text to land anywhere useful.
+returns `BAD_REQUEST` rather than dropping them silently.
+
+Three rules govern how events are built and posted. All three come from failures that were
+invisible in the code and destructive in production (`spikes/README.md`):
+
+**1. Keyboard goes to the pid; mouse goes to the HID tap.** A key event posted to
+`kCGHIDEventTap` reaches an Electron/CEF app's *native* layer only: it fires menu shortcuts
+and navigates tabs, but not one character ever reaches the renderer. Keyboard input must use
+`CGEventPostToPid`. Mouse input is the exact opposite — the window server routes clicks by
+screen coordinate, so a click posted to a pid lands nowhere and focus fails silently. The
+asymmetry is deceptive because both failures look like "the element never got focus".
+
+**2. Modifiers are pressed and released, and every event carries an explicit flag mask.**
+The event source is `.privateState`, which inherits no modifier state (`.hidSystemState`
+does). On top of that, `keystroke` emits real `flagsChanged` events around the key — one per
+modifier going down, the mirror sequence coming back up — so the plan always ends on
+flags == 0, and unmodified keystrokes are posted with an explicit empty mask rather than
+whatever was left over. Masking `.maskCommand` onto a key event without ever releasing it
+latches Command inside the target app: the next plain `w` arrives as Cmd+W and closes the
+window.
+
+**3. Nothing is typed into an unfocused element.** The bridge does not enforce this — it
+cannot know the caller's intent — but callers must. When focus is elsewhere, Chromium eats
+each character as a global shortcut and navigates away. Note that `AXFocused = true` does
+*not* work on a `contenteditable`; a real click is the only way to focus one, which is what
+`click` is for.
+
+### Read-only regression for input
+
+`scripts/input-regression.sh` asserts all of the above **without posting a single event**:
+`keystroke` and `click` both accept `"dryRun": true`, which builds the full event plan,
+returns it, and stops. The plan carries the routing target, the source state, and the exact
+flag mask of every event, so the two expensive bugs above are both statically checkable:
+
+```jsonc
+// {"id":1,"op":"keystroke","pid":702,"key":"a","modifiers":["cmd"],"dryRun":true}
+{"ok": true, "dryRun": true, "plan": {
+  "key": "a", "mode": "keycode", "target": "postToPid(702)", "sourceState": "private",
+  "events": [
+    {"kind": "flagsChanged", "keyCode": 55, "flags": 1048576, "flagsHex": "0x100000"},
+    {"kind": "keyDown",      "keyCode": 0,  "flags": 1048576, "flagsHex": "0x100000"},
+    {"kind": "keyUp",        "keyCode": 0,  "flags": 1048576, "flagsHex": "0x100000"},
+    {"kind": "flagsChanged", "keyCode": 55, "flags": 0,       "flagsHex": "0x0"}
+  ]}}
+```
+
+The last event is the one that matters: it is the Command release that was missing when a
+stray `w` closed the window. The script checks routing, source state, zero-mask on plain
+keys, the full press/release choreography for one and two modifiers, uppercase as Shift+key,
+unicode fallback, refusal of modifiers on the unicode path, and `cghidEventTap` routing plus
+argument validation for clicks — 21 assertions, no side effects.
 
 ## Permissions
 
@@ -139,6 +190,26 @@ lock in `Output` and are flushed per line. Closing stdin tears down observers an
 
 Every application element gets a 2 s AX messaging timeout, so a wedged target degrades to
 `AX_ERROR(-25204)` instead of hanging the bridge.
+
+## A placeholder that looks like a window
+
+When the accessibility server cannot materialise an application's windows, it does **not**
+return an empty list. It returns an application-typed placeholder in the window's slot —
+`<AXUIElement Application 0x…> {pid=N}`, `CFEqual` to the app element itself, reporting
+`AXRole == "AXApplication"` and no frame. `AXWindows`, `AXChildren` and `AXMainWindow` all do
+it. Left alone it makes an application its own child, collapses it onto the root's `nodeId`,
+and hands callers a frame-less "window" that every click resolves to nothing.
+
+`AXElement.elementList` drops any element that is `CFEqual` to its parent, so these never
+reach the wire; `windows` returns `[]` instead. An element that is its own parent is never
+legitimate, so the filter is a no-op on a healthy tree.
+
+Worth knowing because the degraded state is easy to misread as a bridge bug: it can appear
+machine-wide, with `AXIsProcessTrusted()` still returning `true` while every real query
+fails. The tell is the system-wide element — when
+`AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute)`
+returns `-25204 cannotComplete` and *every* application reduces to its menu bar, the problem
+is the machine's accessibility state, not the target app and not this bridge.
 
 ## Electron / Feishu notes
 

@@ -102,12 +102,6 @@ struct TreeDumper {
     }
 
     static func windowList(app: AXElement) -> [AXElement] {
-        guard let value = app.copy(kAXWindowsAttribute), CFGetTypeID(value) == CFArrayGetTypeID() else { return [] }
-        let array = value as! CFArray as [AnyObject]
-        return array.compactMap { item in
-            let ref = item as CFTypeRef
-            guard CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
-            return AXElement(ref as! AXUIElement)
-        }
+        app.elementList(app.copy(kAXWindowsAttribute))
     }
 }

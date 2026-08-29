@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 /// Routes one request to one handler. Runs entirely on the main thread so the element
@@ -8,7 +9,7 @@ enum Dispatcher {
     /// Ops that touch the Accessibility API and therefore need TCC approval.
     private static let trustRequired: Set<String> = [
         "enableAX", "tree", "find", "attr", "setValue", "press", "focus",
-        "keystroke", "observe", "unobserve", "windows"
+        "keystroke", "click", "observe", "unobserve", "windows"
     ]
 
     static func handle(_ request: Request) {
@@ -41,6 +42,7 @@ enum Dispatcher {
                                                action: request.string("action") ?? kAXPressAction)
         case "focus": return try Actions.focus(nodeId: request.requireInt("nodeId"))
         case "keystroke": return try keystroke(request)
+        case "click": return try click(request)
         case "observe": return try observe(request)
         case "unobserve": return try ObserverRegistry.shared.unobserve(id: request.requireInt("subscription"))
         case "shutdown": return shutdown(request)
@@ -141,8 +143,31 @@ enum Dispatcher {
 
     private static func keystroke(_ request: Request) throws -> JSONValue {
         let pid = try Processes.requirePid(request.requireInt("pid"))
-        let modifiers = (request.params["modifiers"]?.arrayValue ?? []).compactMap { $0.stringValue }
-        return try Actions.keystroke(pid: pid, key: try request.requireString("key"), modifiers: modifiers)
+        return try Actions.keystroke(pid: pid,
+                                     key: try request.requireString("key"),
+                                     modifiers: modifierList(request),
+                                     dryRun: request.bool("dryRun", default: false))
+    }
+
+    /// Click target: an explicit screen point, or the centre of a node's frame.
+    private static func click(_ request: Request) throws -> JSONValue {
+        let point: CGPoint
+        if let nodeId = request.params["nodeId"]?.intValue {
+            point = try Mouse.center(of: AXElement(try ElementRegistry.shared.element(for: nodeId)))
+        } else if let x = request.params["x"]?.doubleValue, let y = request.params["y"]?.doubleValue {
+            point = CGPoint(x: x, y: y)
+        } else {
+            throw BridgeError.badRequest("click needs either 'nodeId' or both 'x' and 'y'")
+        }
+        return try Mouse.click(at: point,
+                               button: request.string("button") ?? "left",
+                               clickCount: request.int("clickCount", default: 1),
+                               modifiers: modifierList(request),
+                               dryRun: request.bool("dryRun", default: false))
+    }
+
+    private static func modifierList(_ request: Request) -> [String] {
+        (request.params["modifiers"]?.arrayValue ?? []).compactMap { $0.stringValue }
     }
 
     private static func observe(_ request: Request) throws -> JSONValue {

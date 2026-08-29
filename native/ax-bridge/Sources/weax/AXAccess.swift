@@ -67,12 +67,27 @@ struct AXElement {
     }
 
     func children() -> [AXElement] {
-        guard let value = copy(kAXChildrenAttribute), CFGetTypeID(value) == CFArrayGetTypeID() else { return [] }
+        elementList(copy(kAXChildrenAttribute))
+    }
+
+    /// Extracts AXUIElements from an attribute value, dropping anything that is not an
+    /// element and anything equal to the receiver.
+    ///
+    /// The self-equal filter is load-bearing. When an application has no AX-materialized
+    /// window, the accessibility server does not return an empty list — it returns an
+    /// *application-typed placeholder* (`<AXUIElement Application …> {pid=N}`, CFEqual to
+    /// the app element) in the window's slot. `AXWindows`, `AXChildren` and `AXMainWindow`
+    /// all do this. Passing one through would report the application as its own child,
+    /// collapse it onto the root's nodeId, and hand callers a frame-less "window".
+    func elementList(_ value: CFTypeRef?) -> [AXElement] {
+        guard let value = value, CFGetTypeID(value) == CFArrayGetTypeID() else { return [] }
         let array = value as! CFArray as [AnyObject]
         return array.compactMap { item in
-            let ref = item as CFTypeRef
-            guard CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
-            return AXElement(ref as! AXUIElement)
+            let candidate = item as CFTypeRef
+            guard CFGetTypeID(candidate) == AXUIElementGetTypeID() else { return nil }
+            let element = candidate as! AXUIElement
+            guard !CFEqual(element, ref) else { return nil }
+            return AXElement(element)
         }
     }
 
