@@ -30,6 +30,7 @@ export const ROLE = {
   staticText: 'AXStaticText',
   textArea: 'AXTextArea',
   window: 'AXWindow',
+  webArea: 'AXWebArea',
 } as const;
 
 /** DOM class hooks. Comments give what each one anchors. */

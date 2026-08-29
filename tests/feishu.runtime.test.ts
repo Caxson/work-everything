@@ -11,7 +11,7 @@ import { ShellExecutor } from '../src/execution/shell.js';
 import { toolRunner, ok, type Executor, type ToolResult } from '../src/execution/base.js';
 import { makeResponder, preflight } from '../src/run/feishuRuntime.js';
 import { AxBridgeClient } from '../src/perception/macos/axBridge.js';
-import { FeishuReader } from '../src/perception/feishu/reader.js';
+import { FeishuReader, feishuHealthMonitor } from '../src/perception/feishu/reader.js';
 import { ChatRouteTable } from '../src/perception/feishu/chatRoutes.js';
 import { FEISHU_REPLY_TOOL, type FeishuExecutor } from '../src/execution/feishu/sender.js';
 import type { Event } from '../src/core/events.js';
@@ -187,14 +187,15 @@ describe('preflight', () => {
     });
   }
 
-  function reader(client: AxBridgeClient): FeishuReader {
-    return new FeishuReader(client, {
+  function monitorFor(client: AxBridgeClient, wedgedAfter = 3): ReturnType<typeof feishuHealthMonitor> {
+    const reader = new FeishuReader(client, {
       bundleId: 'com.bytedance.macos.feishu',
       appPath: '/Applications/Lark.app',
       selfName: CHAT,
       windowTimeoutMs: 50,
       reopen: async () => undefined,
     });
+    return feishuHealthMonitor(client, reader, { screenLocked: async () => false, config: { wedgedAfter } });
   }
 
   it('passes, and reports the pid, when Feishu is showing a window', async () => {
@@ -202,19 +203,34 @@ describe('preflight', () => {
     const lines: string[] = [];
     const config = parseConfig({ feishu: { allowedChats: [CHAT] }, trust: { autoReplyChats: [CHAT] } });
     try {
-      expect(await preflight(config, client, reader(client), true, (line) => lines.push(line))).toEqual([]);
-      expect(lines.join('\n')).toContain('window visible');
+      expect(await preflight(config, client, monitorFor(client), true, (line) => lines.push(line))).toEqual([]);
+      expect(lines.join('\n')).toContain('conversation open');
     } finally {
       await client.stop();
     }
   });
 
-  it('names the tray/locked-screen state instead of starting a daemon that can never read', async () => {
+  it('lets a tray-closed Feishu through: the user may be about to open it', async () => {
     const client = bridge({ FAKE_NO_WINDOW: '1' });
     const config = parseConfig({ feishu: { allowedChats: [CHAT] } });
+    const lines: string[] = [];
     try {
-      const problems = await preflight(config, client, reader(client), false, () => undefined);
-      expect(problems.join(' ')).toContain('shows no window');
+      expect(await preflight(config, client, monitorFor(client), false, (line) => lines.push(line))).toEqual([]);
+      expect(lines.join(' ')).toContain('tray');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('refuses to start against a wedged Feishu, because nothing will ever arrive', async () => {
+    const client = bridge({ FAKE_NO_WINDOW: '1' });
+    const config = parseConfig({ feishu: { allowedChats: [CHAT] } });
+    const monitor = monitorFor(client, 1);
+    try {
+      await monitor.check();
+      const problems = await preflight(config, client, monitor, false, () => undefined);
+      expect(problems.join(' ')).toContain('wedged');
+      expect(problems.join(' ')).toContain('restart Feishu');
     } finally {
       await client.stop();
     }
@@ -224,7 +240,7 @@ describe('preflight', () => {
     const client = bridge({ FAKE_UNTRUSTED: '1' });
     const config = parseConfig({ feishu: { allowedChats: [CHAT] } });
     try {
-      const problems = await preflight(config, client, reader(client), false, () => undefined);
+      const problems = await preflight(config, client, monitorFor(client), false, () => undefined);
       expect(problems.join(' ')).toContain('accessibility permission');
     } finally {
       await client.stop();
@@ -234,7 +250,7 @@ describe('preflight', () => {
   it('refuses to run with an empty allowlist, because it would observe nothing', async () => {
     const client = bridge({});
     try {
-      const problems = await preflight(parseConfig({}), client, reader(client), false, () => undefined);
+      const problems = await preflight(parseConfig({}), client, monitorFor(client), false, () => undefined);
       expect(problems.join(' ')).toContain('feishu.allowedChats is empty');
     } finally {
       await client.stop();

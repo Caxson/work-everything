@@ -18,10 +18,11 @@ import { ShellExecutor } from '../execution/shell.js';
 import { toolRunner } from '../execution/base.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../execution/feishu/sender.js';
 import { AxBridgeClient } from '../perception/macos/axBridge.js';
-import { FeishuReader } from '../perception/feishu/reader.js';
+import { FeishuReader, feishuHealthMonitor } from '../perception/feishu/reader.js';
 import { FeishuPerceiver } from '../perception/feishu/perceiver.js';
 import { ChatRouteTable } from '../perception/feishu/chatRoutes.js';
 import { SentLedger } from '../perception/feishu/sentLedger.js';
+import type { FeishuHealthMonitor } from '../perception/feishu/health.js';
 import { ClaudeCodeHost } from '../hosts/claudeCode.js';
 import { createLightModel, resolveApiKey } from '../llm/openaiCompatible.js';
 import type { Event } from '../core/events.js';
@@ -31,6 +32,8 @@ export interface FeishuRuntime {
   readonly store: TrajectoryStore;
   readonly run: (signal: AbortSignal) => Promise<void>;
   readonly stop: () => Promise<void>;
+  /** Set when the loop ended because Feishu's accessibility layer is wedged. */
+  readonly fatal: () => string | undefined;
   /** What the operator should be told before the first event arrives. */
   readonly preflight: () => Promise<readonly string[]>;
 }
@@ -60,11 +63,19 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
     windowTimeoutMs: config.feishu.windowTimeoutMs,
   });
 
+  const monitor = feishuHealthMonitor(client, reader);
+  let fatal: string | undefined;
   const perceiver = new FeishuPerceiver({
     client,
     reader,
+    monitor,
     routes,
     ledger,
+    onWarn: (message) => log(`[feishu] ${message}`),
+    onFatal: (health) => {
+      fatal = health.detail;
+      log(`[feishu] ${health.detail}`);
+    },
     config: {
       allowedChats: config.feishu.allowedChats,
       pollIntervalMs: config.feishu.pollIntervalMs,
@@ -76,6 +87,7 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   const feishu = new FeishuExecutor({
     client,
     reader,
+    monitor,
     routes,
     ledger,
     config: {
@@ -129,12 +141,13 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   return {
     daemon,
     store,
+    fatal: () => fatal,
     run: (signal) => daemon.run(signal),
     stop: async () => {
       await perceiver.close();
       await client.stop();
     },
-    preflight: () => preflight(config, client, reader, apiKey !== undefined, log),
+    preflight: () => preflight(config, client, monitor, apiKey !== undefined, log),
   };
 }
 
@@ -194,7 +207,7 @@ function pendingRecord(event: Event, chat: string, text: string): Parameters<Tra
 export async function preflight(
   config: Config,
   client: AxBridgeClient,
-  reader: FeishuReader,
+  monitor: FeishuHealthMonitor,
   hasLightModel: boolean,
   log: LogFn,
 ): Promise<readonly string[]> {
@@ -209,9 +222,11 @@ export async function preflight(
       problems.push('the ax bridge has no accessibility permission; grant it to the app that starts this daemon');
       return problems;
     }
-    const window = await reader.ensureWindow();
-    if (!window.ok) problems.push(window.reason);
-    else log(`[preflight] Feishu pid ${window.pid}, window visible`);
+    const health = await monitor.check();
+    // `no_window` is not a reason to refuse to start — the user may be about
+    // to open Feishu — but `wedged` is: nothing will ever arrive.
+    if (health.state === 'wedged') problems.push(health.detail);
+    else log(`[preflight] ${health.detail}`);
   } catch (error) {
     problems.push(error instanceof Error ? error.message : String(error));
   }

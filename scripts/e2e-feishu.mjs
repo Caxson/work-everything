@@ -8,19 +8,23 @@
  * Every step writes its evidence — the AX read-back, the trajectory row, the
  * daemon's own log — into --out.
  *
- * Two things it refuses to do, because this drives someone's real chat client:
+ * Four things it refuses to do, because this drives someone's real chat client:
  *
  *   1. It will not run against a conversation that is not a chat with
  *      yourself. The proof is the composer placeholder, which Feishu writes as
  *      `可以向自己发送文件或转发消息` there and `发送给 <name>` everywhere else.
- *   2. It sends each message once. A step that does not confirm is reported as
+ *   2. It will not clear a composer that already holds an unsent draft.
+ *   3. It sends each message once. A step that does not confirm is reported as
  *      a failure; it is never retried into the conversation.
+ *   4. If the health check says Feishu is *wedged*, it stops and records that
+ *      as the result. It does not retry, and it does not restart the app —
+ *      only a human does that.
  *
  * Usage:
  *   node scripts/e2e-feishu.mjs --config <path> --chat "<title>" --out <dir>
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, createWriteStream } from 'node:fs';
+import { mkdirSync, writeFileSync, createWriteStream, statSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -28,6 +32,7 @@ import { loadConfig } from '../dist/config.js';
 import { AxBridgeClient } from '../dist/perception/macos/axBridge.js';
 import { FeishuReader } from '../dist/perception/feishu/reader.js';
 import { ChatRouteTable } from '../dist/perception/feishu/chatRoutes.js';
+import { feishuHealthMonitor } from '../dist/perception/feishu/reader.js';
 import { SentLedger } from '../dist/perception/feishu/sentLedger.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../dist/execution/feishu/sender.js';
 
@@ -62,9 +67,11 @@ const reader = new FeishuReader(client, {
   selfName: config.feishu.selfName,
   windowTimeoutMs: config.feishu.windowTimeoutMs,
 });
+const monitor = feishuHealthMonitor(client, reader);
 const sender = new FeishuExecutor({
   client,
   reader,
+  monitor,
   routes: new ChatRouteTable(),
   ledger: new SentLedger(),
   config: {
@@ -94,14 +101,22 @@ try {
 
 async function main() {
   // --- 0. safety gate ------------------------------------------------------
+  checkBridgeIsFresh();
   client.start();
   if (!(await client.trusted())) fatal('the ax bridge has no accessibility permission');
-  const window = await reader.ensureWindow();
-  if (!window.ok) fatal(window.reason);
+
+  const health = await monitor.check();
+  evidence('00-health.json', health);
+  say(`health: ${health.state} — ${health.detail}`);
+  if (health.state === 'wedged') {
+    step('0 health', 'ok', `wedged: ${health.detail}`, false, '00-health.json');
+    fatal('Feishu is wedged. Recording that as the result — not retrying, and not restarting the app.');
+  }
+  if (health.state !== 'ok') fatal(health.detail);
 
   const before = await reader.snapshot();
   evidence('00-snapshot-before.json', before);
-  say(`Feishu pid ${window.pid}; conversation on screen: "${before.chatTitle}" (selfChat=${before.isSelfChat})`);
+  say(`Feishu pid ${health.pid}; conversation on screen: "${before.chatTitle}" (selfChat=${before.isSelfChat})`);
   if (before.chatTitle !== chat) fatal(`the open conversation is "${before.chatTitle}", not "${chat}" — open it and rerun`);
   if (!before.isSelfChat) fatal(`"${chat}" is not a chat with yourself; this harness refuses to message anyone else`);
   // Sending starts with Cmd+A, Delete. An unsent draft in the composer is
@@ -229,6 +244,39 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 2) out[String(argv[i]).replace(/^--/, '')] = argv[i + 1];
   return out;
+}
+
+/**
+ * The bridge binary is built from `native/ax-bridge` and is fixed there
+ * independently of this package. Running the end-to-end check against a stale
+ * one produces a failure that belongs to nobody, so it is refused up front.
+ */
+function checkBridgeIsFresh() {
+  const binary = resolve(REPO_ROOT, config.axBridge.binaryPath);
+  let built;
+  try {
+    built = statSync(binary).mtimeMs;
+  } catch {
+    fatal(`no ax bridge binary at ${binary}; build it with: (cd native/ax-bridge && swift build -c release)`);
+  }
+  const sourceDir = join(REPO_ROOT, 'native', 'ax-bridge', 'Sources');
+  let newest = 0;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith('.swift')) newest = Math.max(newest, statSync(path).mtimeMs);
+    }
+  };
+  try {
+    walk(sourceDir);
+  } catch {
+    newest = 0;
+  }
+  say(`ax bridge: ${binary} built ${new Date(built).toISOString()}`);
+  if (newest > built) {
+    fatal(`the ax bridge binary is older than its Swift sources; rebuild it with: (cd native/ax-bridge && swift build -c release)`);
+  }
 }
 
 /** The composer reads back as its placeholder when nothing is typed. */

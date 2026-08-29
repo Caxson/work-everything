@@ -88,7 +88,15 @@ program
       await runtime.run(controller.signal);
     } finally {
       await runtime.stop();
-      log('[run] stopped');
+      const fatal = runtime.fatal();
+      if (fatal === undefined) {
+        log('[run] stopped');
+      } else {
+        // A wedged accessibility layer is not something the daemon can retry
+        // its way out of; it ends the run and says what a human has to do.
+        console.error(`[run] stopped: ${fatal}`);
+        process.exitCode = 1;
+      }
     }
   });
 

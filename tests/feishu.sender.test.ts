@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AxBridgeClient } from '../src/perception/macos/axBridge.js';
-import { FeishuReader } from '../src/perception/feishu/reader.js';
+import { FeishuReader, feishuHealthMonitor } from '../src/perception/feishu/reader.js';
 import { ChatRouteTable } from '../src/perception/feishu/chatRoutes.js';
 import { SentLedger } from '../src/perception/feishu/sentLedger.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../src/execution/feishu/sender.js';
@@ -28,7 +28,7 @@ afterEach(async () => {
   open = undefined;
 });
 
-function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[] } = {}): Rig {
+function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[]; wedgedAfter?: number } = {}): Rig {
   const log: Rig['log'] = [];
   const spawnFn = (): ChildProcessWithoutNullStreams => {
     const child = spawn(process.execPath, [helper], {
@@ -61,9 +61,15 @@ function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[
   });
   const routes = new ChatRouteTable();
   const ledger = new SentLedger();
+  // The host's real lock state must not leak into a unit test.
+  const monitor = feishuHealthMonitor(client, reader, {
+    screenLocked: async () => false,
+    config: { wedgedAfter: options.wedgedAfter ?? 3 },
+  });
   const executor = new FeishuExecutor({
     client,
     reader,
+    monitor,
     routes,
     ledger,
     config: {
@@ -132,6 +138,17 @@ describe('feishu.reply', () => {
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
     expect(result.ok).toBe(false);
     expect(result.error).toContain('no window');
+    expect(keystrokes(log)).toEqual([]);
+  });
+
+  it('refuses to synthesize input into a wedged app, and says a human must restart it', async () => {
+    const { executor, log } = rig({ env: { FAKE_NO_WINDOW: '1' }, wedgedAfter: 1 });
+    // The first read exhausts the monitor's patience.
+    await executor.run(FEISHU_REPLY_TOOL, { text: 'first', chat: SELF_CHAT });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'second', chat: SELF_CHAT });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('wedged');
+    expect(result.error).toContain('restart Feishu');
     expect(keystrokes(log)).toEqual([]);
   });
 

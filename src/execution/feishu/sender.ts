@@ -12,6 +12,9 @@
  *   and the app is asked who holds focus, and a failed check sends zero keys.
  * - **Nothing is sent until the text is read back out of the composer.** Enter
  *   is the send key and there is no undo.
+ * - **Nothing is typed into an app whose accessibility layer is wedged.** The
+ *   health check runs before the first click, so a broken Feishu produces a
+ *   readable error instead of keystrokes fired into nowhere.
  * - **Nothing is sent to a conversation that was not asked for.** The target
  *   chat is resolved from the event's own trace id, checked against the
  *   allowlist, and compared with the title actually on screen.
@@ -23,6 +26,7 @@ import type { Executor, ToolResult } from '../base.js';
 import { describeError, fail, ok } from '../base.js';
 import type { ChatRouteTable } from '../../perception/feishu/chatRoutes.js';
 import type { FeishuReader } from '../../perception/feishu/reader.js';
+import type { FeishuHealthMonitor } from '../../perception/feishu/health.js';
 import type { SentLedger } from '../../perception/feishu/sentLedger.js';
 import type { AxBridgeClient } from '../../perception/macos/axBridge.js';
 import { COMMAND_MODIFIER, DELETE_KEY, DOM_CLASS, SELECT_ALL_KEY, SEND_KEY } from '../../perception/feishu/selectors.js';
@@ -57,6 +61,8 @@ export const DEFAULT_FEISHU_SENDER_CONFIG: FeishuSenderConfig = {
 export interface FeishuSenderDeps {
   readonly client: AxBridgeClient;
   readonly reader: FeishuReader;
+  /** Consulted before any input is synthesized. */
+  readonly monitor: FeishuHealthMonitor;
   readonly routes: ChatRouteTable;
   /** Everything sent is recorded here so the perceiver skips its own echo. */
   readonly ledger: SentLedger;
@@ -130,8 +136,10 @@ export class FeishuExecutor implements Executor {
   // --- the send itself -----------------------------------------------------
 
   private async send(target: string, text: string): Promise<ReplyOutcome> {
-    const window = await this.deps.reader.ensureWindow();
-    if (!window.ok) throw new Error(window.reason);
+    // `require` throws on a wedged app; a merely absent window is an ordinary
+    // failure of this send, not a reason to keep hammering the accessibility API.
+    const health = await this.deps.monitor.require();
+    if (health.state !== 'ok') throw new Error(health.detail);
 
     const before = await this.deps.reader.snapshot();
     if (!before.hasOpenChat) throw new Error('no Feishu conversation is open');
@@ -145,13 +153,13 @@ export class FeishuExecutor implements Executor {
       throw new Error('could not put the caret in the composer; sent no keystrokes');
     }
 
-    await this.clearComposer(window.pid);
-    await this.typeText(window.pid, text);
+    await this.clearComposer(health.pid);
+    await this.typeText(health.pid, text);
     await this.sleep(this.deps.config.typeSettleMs);
 
     const staged = await this.deps.reader.snapshot();
     if (!contains(staged.composerText, text)) {
-      await this.clearComposer(window.pid);
+      await this.clearComposer(health.pid);
       throw new Error('the composer does not contain the reply after typing it; nothing was sent');
     }
 
@@ -161,7 +169,7 @@ export class FeishuExecutor implements Executor {
     // Recorded before the key that sends it: the perceiver may read the message
     // back before `awaitEcho` returns, and it must already know whose it is.
     this.deps.ledger.record(text);
-    await this.deps.client.keystroke(window.pid, SEND_KEY);
+    await this.deps.client.keystroke(health.pid, SEND_KEY);
 
     const echoedMessageId = await this.awaitEcho(text);
     this.deps.ledger.record(text, echoedMessageId);

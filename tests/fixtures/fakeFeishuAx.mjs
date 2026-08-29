@@ -133,6 +133,31 @@ function keystroke(params) {
   return { ok: true, mode: 'unicode' };
 }
 
+/** The `find` op: a flat, pre-order scan matching every supplied selector field. */
+function find(params) {
+  const selector = params.selector ?? {};
+  const hits = [];
+  const limit = selector.maxResults ?? 30;
+  const visit = (node, depth) => {
+    if (hits.length >= limit) return;
+    const classes = node.domClasses ?? [];
+    const matches =
+      (selector.role === undefined || node.role === selector.role) &&
+      (selector.title === undefined || node.title === selector.title) &&
+      (selector.domId === undefined || node.domId === selector.domId) &&
+      (selector.domClass === undefined || classes.includes(selector.domClass));
+    if (matches) {
+      // `find` results are flat: they carry a depth instead of children.
+      const flat = { ...node, depth };
+      delete flat.children;
+      hits.push(flat);
+    }
+    for (const child of node.children ?? []) visit(child, depth + 1);
+  };
+  for (const root of buildTree()) visit(root, 0);
+  return hits;
+}
+
 function attr(params) {
   if (params.nodeId === WINDOW_NODE && params.name === 'AXParent') return { nodeId: APP_NODE };
   if (params.nodeId === APP_NODE && params.name === 'AXFocusedUIElement') {
@@ -154,6 +179,8 @@ function handle(request) {
       return process.env['FAKE_NO_WINDOW'] === '1' ? [] : [{ index: 0, nodeId: WINDOW_NODE, role: 'AXWindow', title: '飞书' }];
     case 'tree':
       return buildTree();
+    case 'find':
+      return process.env['FAKE_NO_WEB_AREA'] === '1' ? [] : find(request);
     case 'attr':
       return attr(request);
     case 'click':

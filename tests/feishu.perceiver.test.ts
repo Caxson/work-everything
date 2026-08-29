@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FeishuPerceiver } from '../src/perception/feishu/perceiver.js';
 import { ChatRouteTable } from '../src/perception/feishu/chatRoutes.js';
 import { SentLedger } from '../src/perception/feishu/sentLedger.js';
+import { FeishuHealthMonitor, type FeishuHealth } from '../src/perception/feishu/health.js';
 import type { ChatSnapshot, FeishuMessage } from '../src/perception/feishu/messages.js';
 import type { FeishuReader } from '../src/perception/feishu/reader.js';
 import type { AxBridgeClient } from '../src/perception/macos/axBridge.js';
@@ -39,6 +40,17 @@ function fakeClient(): AxBridgeClient {
   } as unknown as AxBridgeClient;
 }
 
+/** A monitor that always reports the app as readable. */
+function healthyMonitor(pid = 4242): FeishuHealthMonitor {
+  return new FeishuHealthMonitor({
+    pid: async () => pid,
+    windows: async () => [{ nodeId: 1, role: 'AXWindow', title: '飞书' }],
+    webAreas: async () => [{ nodeId: 2, role: 'AXWebArea', title: 'messenger-chat' }],
+    screenLocked: async () => false,
+    requestWindow: async () => undefined,
+  });
+}
+
 /** A reader that hands back a scripted sequence of snapshots. */
 function fakeReader(script: readonly ChatSnapshot[]): FeishuReader {
   let index = 0;
@@ -70,6 +82,7 @@ function build(
   const perceiver = new FeishuPerceiver({
     client: fakeClient(),
     reader: fakeReader(script),
+    monitor: healthyMonitor(),
     routes,
     ledger,
     config: { allowedChats, pollIntervalMs: 5, debounceMs: 0, memory: 100 },
@@ -180,13 +193,15 @@ describe('the Feishu perceiver', () => {
     const perceiver = new FeishuPerceiver({
       client: fakeClient(),
       reader,
+      monitor: healthyMonitor(),
       routes,
+      ledger: new SentLedger(),
       config: { allowedChats: [SELF_CHAT], pollIntervalMs: 5, debounceMs: 0, memory: 100 },
       onWarn: (message_) => warnings.push(message_),
     });
 
     expect(await collect(perceiver, 150)).toEqual([]);
-    expect(warnings[0]).toContain('no window');
+    expect(warnings.join('\n')).toContain('no window');
     expect(calls).toBeGreaterThan(1);
   });
 });
@@ -200,6 +215,71 @@ describe('the chat route table', () => {
     expect(routes.size).toBe(2);
     expect(routes.lookup('a')).toBeUndefined();
     expect(routes.lookup('c')?.chatTitle).toBe('C');
+  });
+});
+
+describe('the perceiver’s health gate', () => {
+  function withMonitor(monitor: FeishuHealthMonitor): { perceiver: FeishuPerceiver; warnings: string[]; fatal: FeishuHealth[]; reads: () => number } {
+    let reads = 0;
+    const reader = {
+      pid: async () => 4242,
+      snapshot: async () => {
+        reads += 1;
+        return snapshot(SELF_CHAT, [message({ id: 'x', fingerprint: 'x' })]);
+      },
+    } as unknown as FeishuReader;
+    const warnings: string[] = [];
+    const fatal: FeishuHealth[] = [];
+    const perceiver = new FeishuPerceiver({
+      client: fakeClient(),
+      reader,
+      monitor,
+      routes: new ChatRouteTable(),
+      ledger: new SentLedger(),
+      config: { allowedChats: [SELF_CHAT], pollIntervalMs: 5, debounceMs: 0, memory: 100 },
+      onWarn: (line) => warnings.push(line),
+      onFatal: (health) => fatal.push(health),
+    });
+    return { perceiver, warnings, fatal, reads: () => reads };
+  }
+
+  const trayed = (wedgedAfter: number): FeishuHealthMonitor =>
+    new FeishuHealthMonitor({
+      pid: async () => 4242,
+      windows: async () => [],
+      webAreas: async () => [],
+      screenLocked: async () => false,
+      requestWindow: async () => undefined,
+      config: { wedgedAfter },
+    });
+
+  it('does not read Feishu at all while it has no window', async () => {
+    const { perceiver, warnings, reads } = withMonitor(trayed(1_000));
+    expect(await collect(perceiver, 120)).toEqual([]);
+    expect(reads()).toBe(0);
+    expect(warnings.join('\n')).toContain('tray');
+  });
+
+  it('ends the stream on a wedged app instead of retrying it forever', async () => {
+    const { perceiver, fatal, warnings } = withMonitor(trayed(1));
+    expect(await collect(perceiver, 300)).toEqual([]);
+    expect(fatal).toHaveLength(1);
+    expect(fatal[0]?.state).toBe('wedged');
+    expect(warnings.join('\n')).toContain('restart Feishu');
+  });
+
+  it('says a locked screen out loud once, not on every poll', async () => {
+    const locked = new FeishuHealthMonitor({
+      pid: async () => 4242,
+      windows: async () => [],
+      webAreas: async () => [],
+      screenLocked: async () => true,
+      requestWindow: async () => undefined,
+    });
+    const { perceiver, warnings, fatal } = withMonitor(locked);
+    expect(await collect(perceiver, 200)).toEqual([]);
+    expect(warnings.filter((line) => line.includes('screen is locked'))).toHaveLength(1);
+    expect(fatal).toEqual([]);
   });
 });
 

@@ -20,6 +20,10 @@
  * changes under us, so a chat is *primed* the first time it is seen — its
  * visible history is recorded as already-known and emits nothing. Only what
  * appears after that is new.
+ *
+ * Every sweep starts with a health check (`health.ts`). `no_window` skips the
+ * sweep; `wedged` ends the stream with a readable error rather than retrying
+ * an accessibility layer that will not come back on its own.
  */
 import type { Event } from '../../core/events.js';
 import type { Perceiver } from '../base.js';
@@ -29,6 +33,7 @@ import type { ChatRouteTable } from './chatRoutes.js';
 import type { ChatSnapshot, FeishuMessage } from './messages.js';
 import type { FeishuReader } from './reader.js';
 import type { SentLedger } from './sentLedger.js';
+import type { FeishuHealth, FeishuHealthMonitor } from './health.js';
 import { FEISHU_NOTIFICATIONS } from './selectors.js';
 
 export interface FeishuPerceiverConfig {
@@ -52,12 +57,16 @@ export const DEFAULT_FEISHU_PERCEIVER_CONFIG: FeishuPerceiverConfig = {
 export interface FeishuPerceiverDeps {
   readonly client: AxBridgeClient;
   readonly reader: FeishuReader;
+  /** Asked before every read; the only thing allowed to stop the stream. */
+  readonly monitor: FeishuHealthMonitor;
   readonly routes: ChatRouteTable;
   /** What the sender has already put in these conversations. */
   readonly ledger: SentLedger;
   readonly config: FeishuPerceiverConfig;
   /** Diagnostics. Defaults to stderr; injected in tests. */
   readonly onWarn?: (message: string) => void;
+  /** Called once when the app is wedged, just before the stream ends. */
+  readonly onFatal?: (health: FeishuHealth) => void;
 }
 
 export class FeishuPerceiver implements Perceiver {
@@ -65,7 +74,9 @@ export class FeishuPerceiver implements Perceiver {
   private seen: readonly string[] = [];
   private seenSet = new Set<string>();
   private primed = new Set<string>();
+  private pid: number | undefined;
   private observedPid: number | undefined;
+  private lastState: FeishuHealth['state'] | undefined;
   private subscription: number | undefined;
   private unsubscribe: (() => void) | undefined;
   private wake: (() => void) | undefined;
@@ -86,6 +97,11 @@ export class FeishuPerceiver implements Perceiver {
     });
 
     const aborted = (): boolean => signal?.aborted === true;
+    // Fail fast on a *wedged* app rather than after minutes of empty sweeps.
+    // A tray-closed Feishu is not fatal: the user may open it in a moment.
+    await this.healthy();
+    if (this.stopped) return;
+
     while (!aborted() && !this.stopped) {
       await this.settle(signal);
       if (aborted() || this.stopped) break;
@@ -131,9 +147,32 @@ export class FeishuPerceiver implements Perceiver {
     this.dirty = false;
   }
 
+  /**
+   * The health gate. Returns false when the caller must not read: either the
+   * app has nothing to show right now, or it is wedged and the stream is over.
+   */
+  private async healthy(): Promise<boolean> {
+    const health = await this.deps.monitor.check();
+    if (health.state === 'ok') {
+      this.pid = health.pid;
+      if (this.lastState !== 'ok') this.warn(health.detail);
+      this.lastState = 'ok';
+      return true;
+    }
+    // Say it once per state change, not once per poll.
+    if (this.lastState !== health.state) this.warn(health.detail);
+    this.lastState = health.state;
+    if (health.state === 'wedged') {
+      this.stopped = true;
+      this.deps.onFatal?.(health);
+    }
+    return false;
+  }
+
   /** One read of Feishu, turned into whatever events it justifies. */
   private async sweep(): Promise<readonly Event[]> {
     try {
+      if (!(await this.healthy())) return [];
       await this.ensureObserver();
       const snapshot = await this.deps.reader.snapshot();
       if (!snapshot.hasOpenChat || snapshot.chatTitle === '') return [];
@@ -154,6 +193,7 @@ export class FeishuPerceiver implements Perceiver {
       // Feishu restarting gives it a new pid, and every later call against the
       // cached one fails the same way forever. Drop the pid and the
       // subscription so the next sweep resolves both again.
+      this.pid = undefined;
       this.observedPid = undefined;
       this.subscription = undefined;
       return [];
@@ -161,7 +201,10 @@ export class FeishuPerceiver implements Perceiver {
   }
 
   private async ensureObserver(): Promise<void> {
-    const pid = await this.deps.reader.pid(this.observedPid === undefined);
+    // The health check already re-resolved the pid, and it re-resolves it on
+    // every check, so a Feishu restart re-subscribes here on the next sweep.
+    const pid = this.pid;
+    if (pid === undefined) return;
     if (this.observedPid === pid && this.subscription !== undefined) return;
     if (this.subscription !== undefined) {
       try {

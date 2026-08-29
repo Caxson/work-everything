@@ -6,9 +6,10 @@
  * behaviours here are not obvious and are load-bearing:
  *
  * 1. Feishu spends most of its life with **zero windows** — closed to the tray,
- *    or dismissed with Escape. In that state every traversal returns nothing,
- *    which reads exactly like a broken accessibility tree. So a read that finds
- *    no window says so explicitly instead of returning an empty conversation.
+ *    dismissed with Escape, or behind a locked screen. In that state every
+ *    traversal returns nothing, which reads exactly like a broken
+ *    accessibility tree. Telling those apart is `health.ts`'s job; this file
+ *    only supplies the readings, and never diagnoses from one of them.
  * 2. The app element is not addressable directly, but it is a window's
  *    `AXParent`. That detour is how focus can be verified before a single
  *    keystroke is sent — see `sender.ts` for why that matters so much.
@@ -17,16 +18,21 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { AxBridgeClient } from '../macos/axBridge.js';
 import { AxBridgeError } from '../macos/axBridge.js';
+import type { AxNode } from '../macos/axProtocol.js';
 import type { ChatSnapshot } from './messages.js';
 import { parseSnapshot } from './messages.js';
-import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID, MODAL_WINDOW_PREFIX, TREE_MAX_DEPTH, TREE_MAX_NODES } from './selectors.js';
+import type { FeishuHealthConfig } from './health.js';
+import { FeishuHealthMonitor } from './health.js';
+import type { ScreenLockProbe } from '../macos/screenLock.js';
+import { isScreenLocked } from '../macos/screenLock.js';
+import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID, MODAL_WINDOW_PREFIX, ROLE, TREE_MAX_DEPTH, TREE_MAX_NODES } from './selectors.js';
 
 export interface FeishuReaderConfig {
   readonly bundleId: string;
   readonly appPath: string;
   /** Display name used to attribute the user's own messages. */
   readonly selfName: string;
-  /** How long to keep asking the app to show a window before giving up. */
+  /** How long to wait for a reopened window to appear. */
   readonly windowTimeoutMs: number;
   /** Injectable so a test never shells out. */
   readonly reopen?: (appPath: string) => Promise<void>;
@@ -39,8 +45,6 @@ export const DEFAULT_FEISHU_READER_CONFIG: FeishuReaderConfig = {
   selfName: 'me',
   windowTimeoutMs: 8_000,
 };
-
-export type WindowState = { readonly ok: true; readonly pid: number } | { readonly ok: false; readonly reason: string };
 
 const ElementRefSchema = z.object({ nodeId: z.number().int() });
 
@@ -69,28 +73,17 @@ export class FeishuReader {
   }
 
   /**
-   * Make sure Feishu is actually showing a window, reopening it if it is not.
-   * Failure is reported, never thrown: "the user has the app in the tray" and
-   * "the screen is locked" are ordinary states, not errors in this daemon.
+   * Ask Feishu to show its window. One attempt, and it does not wait for a
+   * verdict — deciding what an unchanged app means belongs to `health.ts`,
+   * which is the only place that can tell a tray icon from a wedged one.
    */
-  async ensureWindow(): Promise<WindowState> {
-    const pid = await this.pid(true);
-    // Wall clock on purpose: `config.now` is the injectable stamp for message
-    // timestamps, and a frozen test clock must not turn this into a spin.
-    const deadline = Date.now() + this.config.windowTimeoutMs;
-    for (;;) {
-      const windows = await this.client.windows(pid);
-      if (windows.some((window) => !(window.title ?? '').startsWith(MODAL_WINDOW_PREFIX) && window.role !== 'AXApplication')) {
-        return { ok: true, pid };
-      }
-      if (Date.now() >= deadline) {
-        return {
-          ok: false,
-          reason: 'Feishu is running but shows no window (closed to the tray, or the screen is locked). Show its main window and retry.',
-        };
-      }
-      await this.reopen();
-    }
+  async requestWindow(): Promise<void> {
+    await this.reopen();
+  }
+
+  /** Every web area the app exposes. Zero, with a window open, means trouble. */
+  async webAreas(pid: number): Promise<readonly AxNode[]> {
+    return await this.client.find(pid, { role: ROLE.webArea });
   }
 
   private async reopen(): Promise<void> {
@@ -101,7 +94,7 @@ export class FeishuReader {
     await new Promise<void>((resolve) => {
       const child = spawn('open', ['-a', this.config.appPath], { stdio: 'ignore' });
       child.on('error', () => resolve());
-      child.on('close', () => setTimeout(resolve, 1_200));
+      child.on('close', () => setTimeout(resolve, Math.min(this.config.windowTimeoutMs, 1_500)));
     });
   }
 
@@ -146,4 +139,24 @@ export class FeishuReader {
     const classes = z.array(z.string()).safeParse(await this.client.attr(focused.data.nodeId, 'AXDOMClassList'));
     return classes.success ? classes.data : [];
   }
+}
+
+/**
+ * The health monitor for one bridge/reader pair. Built here so every caller —
+ * the perceiver, the sender, `we run`'s preflight and the end-to-end check —
+ * asks the same question the same way, and re-resolves the pid every time.
+ */
+export function feishuHealthMonitor(
+  client: AxBridgeClient,
+  reader: FeishuReader,
+  options: { readonly screenLocked?: ScreenLockProbe; readonly config?: FeishuHealthConfig } = {},
+): FeishuHealthMonitor {
+  return new FeishuHealthMonitor({
+    pid: () => reader.pid(true),
+    windows: (pid) => client.windows(pid),
+    webAreas: (pid) => reader.webAreas(pid),
+    screenLocked: options.screenLocked ?? isScreenLocked,
+    requestWindow: () => reader.requestWindow(),
+    ...(options.config === undefined ? {} : { config: options.config }),
+  });
 }
