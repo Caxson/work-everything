@@ -10,7 +10,8 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { FAILURE_POLICIES } from './core/scenario.js';
+import { FAILURE_POLICIES, ScenarioSchema } from './core/scenario.js';
+import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID } from './perception/feishu/selectors.js';
 
 export const DEFAULT_STATE_DIR = join(homedir(), '.work-everything');
 
@@ -43,6 +44,12 @@ export const ConfigSchema = z
       .object({
         required: z.number().int().positive().default(3),
         quarantineAfter: z.number().int().positive().default(2),
+        /**
+         * Conversations the daemon may answer without asking first. A chat can
+         * be watched (`feishu.allowedChats`) without being answerable: the
+         * reply is then printed and recorded for a human instead of sent.
+         */
+        autoReplyChats: z.array(z.string()).default([]),
       })
       .strict()
       .default({}),
@@ -76,8 +83,35 @@ export const ConfigSchema = z
       })
       .strict()
       .default({}),
+    feishu: z
+      .object({
+        bundleId: z.string().min(1).default(FEISHU_BUNDLE_ID),
+        appPath: z.string().min(1).default(FEISHU_APP_PATH),
+        /** Display name attributed to the user's own messages. */
+        selfName: z.string().default('me'),
+        /**
+         * Conversation titles that may produce events *and* receive replies.
+         * Empty by default: an unconfigured daemon watches nothing and writes
+         * nowhere, which is the only safe default for someone's real chat app.
+         */
+        allowedChats: z.array(z.string()).default([]),
+        pollIntervalMs: z.number().int().positive().default(3_000),
+        debounceMs: z.number().int().nonnegative().default(250),
+        /** Identical reply text to one chat is dropped inside this window. */
+        dedupeWindowMs: z.number().int().positive().default(30_000),
+        maxTextLength: z.number().int().positive().default(2_000),
+        windowTimeoutMs: z.number().int().positive().default(8_000),
+      })
+      .strict()
+      .default({}),
     defaultFailurePolicy: z.enum(FAILURE_POLICIES).default('fail_fast'),
     tools: z.array(ShellToolSchema).default([]),
+    /**
+     * Hand-written scenarios. They are written into the registry at startup,
+     * so config stays the source of truth for authored muscle memory while
+     * promoted scenarios continue to live only in the database.
+     */
+    scenarios: z.array(ScenarioSchema).default([]),
   })
   .strict();
 

@@ -36,6 +36,17 @@ import type { Registry } from './memory/registry.js';
 /** Asked before an untrusted chain runs. `false` sends the event to slow thinking. */
 export type ConfirmFn = (request: { readonly event: Event; readonly decision: RouteDecision; readonly chain: Scenario }) => Promise<boolean>;
 
+/**
+ * Where a slow-thinking answer goes.
+ *
+ * The muscle and fast tiers answer through their own chains — a step that
+ * writes back is just another tool — but the slow tier produces prose that no
+ * chain asked for. Without this seam that text would end its life in the
+ * trajectory, and the person who sent the message would never see a reply.
+ * It is called only when the host actually said something.
+ */
+export type ResponderFn = (response: { readonly event: Event; readonly text: string; readonly tier: string; readonly ok: boolean }) => Promise<void>;
+
 export interface DaemonOptions {
   readonly store: TrajectoryStore;
   readonly registry: Registry;
@@ -50,6 +61,8 @@ export interface DaemonOptions {
   readonly host?: SlowThinker | undefined;
   /** Omitted means nobody is watching: untrusted chains stay unconfirmed. */
   readonly confirm?: ConfirmFn | undefined;
+  /** Omitted means slow-tier answers are recorded but delivered nowhere. */
+  readonly responder?: ResponderFn | undefined;
 }
 
 export class Daemon {
@@ -108,7 +121,23 @@ export class Daemon {
       steps: outcome.steps,
     };
     this.options.store.append(record);
+    await this.deliver(event, outcome);
     return record;
+  }
+
+  /**
+   * Hand a slow-tier answer to whoever asked. Recorded first, delivered
+   * second, and a delivery that throws is logged rather than allowed to lose
+   * the trajectory that already exists.
+   */
+  private async deliver(event: Event, outcome: TierOutcome): Promise<void> {
+    const responder = this.options.responder;
+    if (responder === undefined || outcome.text === undefined || outcome.text.trim() === '') return;
+    try {
+      await responder({ event, text: outcome.text, tier: outcome.tier, ok: outcome.ok });
+    } catch (error) {
+      console.error(`[daemon] responder failed for ${event.traceId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   // --- tiers ---------------------------------------------------------------
@@ -215,6 +244,7 @@ export class Daemon {
       reason,
       error: result.error,
       steps: [],
+      text: result.text,
     };
   }
 
@@ -280,6 +310,8 @@ interface TierOutcome {
   readonly reason: string;
   readonly error?: string | undefined;
   readonly steps: readonly TrajectoryStep[];
+  /** Prose the slow tier produced, if it ran. Empty on every other path. */
+  readonly text?: string | undefined;
 }
 
 /** Template vars a chain needs that the daemon cannot supply by itself. */

@@ -10,7 +10,7 @@ describe('config', () => {
   it('fills in defaults for an empty object', () => {
     const config = parseConfig({});
     expect(config.router.topK).toBe(8);
-    expect(config.trust).toEqual({ required: 3, quarantineAfter: 2 });
+    expect(config.trust).toEqual({ required: 3, quarantineAfter: 2, autoReplyChats: [] });
     expect(config.tools).toEqual([]);
   });
 

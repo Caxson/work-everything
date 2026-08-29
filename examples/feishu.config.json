@@ -1,0 +1,53 @@
+{
+  "axBridge": {
+    "binaryPath": "native/ax-bridge/.build/release/we-ax",
+    "requestTimeoutMs": 15000
+  },
+
+  "feishu": {
+    "selfName": "REPLACE_WITH_YOUR_CHAT_TITLE",
+    "allowedChats": ["REPLACE_WITH_YOUR_CHAT_TITLE"],
+    "pollIntervalMs": 3000,
+    "dedupeWindowMs": 30000
+  },
+
+  "trust": {
+    "autoReplyChats": ["REPLACE_WITH_YOUR_CHAT_TITLE"]
+  },
+
+  "host": {
+    "command": "claude",
+    "args": ["-p", "--output-format", "json"],
+    "timeoutMs": 120000,
+    "cwd": "/tmp"
+  },
+
+  "router": {
+    "muscleThreshold": 0.35,
+    "planningEnabled": false
+  },
+
+  "tools": [
+    {
+      "name": "clock.now",
+      "description": "The current time, ISO 8601 in UTC.",
+      "command": "date",
+      "argv": ["-u", "+%Y-%m-%dT%H:%M:%SZ"]
+    }
+  ],
+
+  "scenarios": [
+    {
+      "id": "feishu-ping",
+      "name": "feishu ping",
+      "description": "Answer a ping with the current time, without calling a model.",
+      "triggers": ["we ping", "ping"],
+      "kinds": ["message"],
+      "chain": [
+        { "tool": "clock.now", "extractTo": "now" },
+        { "tool": "feishu.reply", "args": { "text": "pong $now", "trace_id": "$trace_id" } }
+      ],
+      "onFailure": "fail_fast"
+    }
+  ]
+}

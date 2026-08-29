@@ -20,8 +20,8 @@ export default tseslint.config(
     rules: { 'no-console': 'off' },
   },
   {
-    // Fixture helpers run as plain Node scripts, not through the TS program.
-    files: ['tests/fixtures/**/*.mjs'],
+    // Plain Node scripts, not part of the TS program.
+    files: ['tests/fixtures/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: { globals: { process: 'readonly', setTimeout: 'readonly', console: 'readonly' } },
     rules: { 'no-console': 'off' },
   },

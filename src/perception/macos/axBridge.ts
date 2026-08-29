@@ -145,8 +145,26 @@ export class AxBridgeClient {
     await this.request('enableAX', { pid });
   }
 
+  /** Every AXWindow of an app, best first. Empty means the app shows no window. */
+  async windows(pid: number): Promise<readonly AxNode[]> {
+    return z.array(AxNodeSchema).parse(await this.request('windows', { pid }));
+  }
+
+  /**
+   * The roots of an app's accessibility tree — one per window. The helper has
+   * always answered with an array; the protocol document describes a single
+   * node, so both shapes are accepted and normalized here.
+   */
+  async roots(pid: number, maxDepth: number, maxNodes: number): Promise<readonly AxNode[]> {
+    const result = await this.request('tree', { pid, maxDepth, maxNodes });
+    return z.union([z.array(AxNodeSchema), AxNodeSchema.transform((node) => [node])]).parse(result);
+  }
+
   async tree(pid: number, maxDepth: number, maxNodes: number): Promise<AxNode> {
-    return AxNodeSchema.parse(await this.request('tree', { pid, maxDepth, maxNodes }));
+    const roots = await this.roots(pid, maxDepth, maxNodes);
+    const first = roots[0];
+    if (first === undefined) throw new AxBridgeError(`process ${pid} exposes no accessibility tree`, 'ax_error');
+    return first;
   }
 
   async find(pid: number, selector: AxSelector): Promise<readonly AxNode[]> {
@@ -167,6 +185,15 @@ export class AxBridgeClient {
 
   async focus(nodeId: number): Promise<void> {
     await this.request('focus', { nodeId });
+  }
+
+  /**
+   * A real mouse click at the node's centre. Chromium's contenteditable does
+   * not take focus from `AXFocused`; only a click routed through the window
+   * server puts the caret inside it.
+   */
+  async click(nodeId: number): Promise<void> {
+    await this.request('click', { nodeId });
   }
 
   async keystroke(pid: number, key: string, modifiers: readonly string[] = []): Promise<void> {

@@ -19,6 +19,7 @@ import { route } from './core/router.js';
 import { chainSteps } from './core/scenario.js';
 import { describeCandidate } from './core/promotion.js';
 import { initialTrust, progress, stageOf } from './core/trust.js';
+import { createFeishuRuntime } from './run/feishuRuntime.js';
 import type { Event } from './core/events.js';
 
 interface Wired {
@@ -50,6 +51,46 @@ function wire(configPath?: string): Wired {
 const program = new Command();
 program.name('we').description('work-everything — inspect the daemon that routes your events').version('0.0.1-alpha.0');
 program.option('-c, --config <path>', 'path to a JSON config file');
+
+program
+  .command('run')
+  .description('start the daemon: watch a source, route what it sees, answer back')
+  .requiredOption('--source <name>', "event source to watch ('feishu')")
+  .action(async (options: { source: string }) => {
+    if (options.source !== 'feishu') {
+      console.error(`unknown source '${options.source}'; the only implemented source is 'feishu'`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const config = loadConfig(program.opts<{ config?: string }>().config);
+    const log = (line: string): void => console.log(line);
+    const runtime = createFeishuRuntime(config, log);
+
+    const problems = await runtime.preflight();
+    if (problems.length > 0) {
+      for (const problem of problems) console.error(`[preflight] ${problem}`);
+      await runtime.stop();
+      process.exitCode = 1;
+      return;
+    }
+
+    const controller = new AbortController();
+    const stop = (): void => {
+      log('[run] stopping');
+      controller.abort();
+    };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+
+    log(`[run] watching ${config.feishu.allowedChats.length} conversation(s); replying in ${config.trust.autoReplyChats.length}`);
+    try {
+      await runtime.run(controller.signal);
+    } finally {
+      await runtime.stop();
+      log('[run] stopped');
+    }
+  });
 
 program
   .command('status')

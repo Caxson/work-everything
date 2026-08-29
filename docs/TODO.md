@@ -4,9 +4,17 @@ Everything known to be missing or provisional in this skeleton lives here.
 
 ## Perception
 
-- Only the macOS accessibility perceiver has a client. Feishu and Claude Code
-  perceivers are interfaces without implementations; the daemon has nothing to
-  observe until one exists.
+- Feishu is implemented; Claude Code is still an interface without one.
+- The Feishu reader only sees what is rendered. The message list is virtualized,
+  so a burst that arrives while the daemon is busy can scroll out of the tree
+  before the next sweep; nothing scrolls back to recover it.
+- Group chats are untested. A group message's sender is left empty rather than
+  guessed, because the layout that exposes it was never observed.
+- Only text is read. A file, image or card message arrives as its rendered
+  label, and there is no way to reply with anything but text.
+- Perception stops dead when Feishu is closed to the tray or the screen is
+  locked: with no window the app exposes no accessibility tree. The daemon
+  reports this instead of failing quietly, but it cannot work around it.
 - `AxPerceiver` watches by bundle id at startup. It does not notice an app
   launching, quitting, or changing pid afterwards.
 - Every AX notification becomes one event. There is no debounce, so a chatty
@@ -37,7 +45,8 @@ Everything known to be missing or provisional in this skeleton lives here.
 
 - Confirmation is a callback with no interface behind it. There is no way for
   a person to actually answer one — `we status` shows what is pending and
-  nothing consumes the answer.
+  nothing consumes the answer. The Feishu write-back gate sidesteps this by
+  printing and recording an unapproved reply rather than asking for one.
 - Quarantine is permanent until `reinstate`, which no command calls yet.
 
 ## Execution and hosts
@@ -49,8 +58,8 @@ Everything known to be missing or provisional in this skeleton lives here.
 
 ## Operations
 
-- `we` inspects state; it cannot start the daemon. There is no `we run`,
-  no service definition, and no log rotation.
+- `we run --source feishu` starts the daemon in the foreground. There is no
+  service definition, no restart policy, and no log rotation.
 - The database is never compacted or pruned.
 - `we replay` re-derives the routing decision only. It does not re-execute a
   chain against recorded tool results.
