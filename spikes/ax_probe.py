@@ -155,6 +155,31 @@ def main_window(app: Any) -> Optional[Any]:
     return candidates[0] if candidates else None
 
 
+def ax_health(app: Any) -> str:
+    """Classify the app's accessibility state: 'ok', 'no_window' or 'wedged'.
+
+    'wedged' is a real, observed failure mode: after a long uptime and repeated
+    window open/close cycles, Feishu's AX provider starts returning the
+    **AXApplication element itself** as its sole entry in `AXWindows` (role
+    'AXApplication', no AXSize), while the real window is still visible on screen and
+    the process is healthy. Apple Events stop working too (`osascript ... activate`
+    fails with -1728) and the app can no longer be brought frontmost.
+
+    Without this check the symptom is indistinguishable from "no window is open", so
+    callers retry `open -a` forever instead of surfacing an actionable error. Only
+    restarting the client clears it.
+    """
+    entries = ax_get(app, "AXWindows")
+    if entries is None:
+        return "wedged"
+    real = [w for w in entries if ax_get(w, "AXRole") == "AXWindow"]
+    if real:
+        return "ok"
+    if any(ax_get(w, "AXRole") == "AXApplication" for w in entries):
+        return "wedged"
+    return "no_window"
+
+
 def ensure_window(pid: int, app_path: str, timeout: float = 12.0) -> bool:
     """Make sure the app actually has an open window, reopening it if needed.
 
@@ -168,11 +193,17 @@ def ensure_window(pid: int, app_path: str, timeout: float = 12.0) -> bool:
     app = app_element(pid)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if windows(app):
+        state = ax_health(app)
+        if state == "ok":
             return True
+        if state == "wedged":
+            raise RuntimeError(
+                f"{app_path} 的辅助功能接口已卡死（AXWindows 返回 AXApplication 自身）。"
+                "重开窗口无效，必须重启该客户端才能恢复。"
+            )
         subprocess.run(["open", "-a", app_path], check=False)
         time.sleep(1.5)
-    return bool(windows(app))
+    return ax_health(app) == "ok"
 
 
 # --------------------------------------------------------------------------- #

@@ -190,7 +190,27 @@ NEW id=7679345486104415420 from_me=True kind=text-message text='[work-everything
 
 `AXValueGetValue(pos, kAXValueCGPointType, None)` —— 第三个参数传 `None`，返回 `(ok, value)`。传 `CGPoint()` 会报 `ValueError: 'valuePtr' should be None`。
 
-**#8 本机没有屏幕录制权限**
+**#8 飞书的 AX 接口会整个卡死，且症状伪装成"窗口没开"**
+
+跑到最后复验时撞上的，**这是上线前必须处理的运行时风险**：飞书跑了 4 天 17 小时、经历多轮开关窗后，它的 AX 提供者进入了坏状态——
+
+- `AXWindows` 长度是 1，但里面那个元素的 `AXRole` 是 **`AXApplication`（应用自己）**，不是 `AXWindow`，且没有 `AXSize`
+- 与此同时**真实窗口好好地显示在屏幕上**（CGWindowList 里 1397x937 onscreen），进程健康（STAT=S，CPU 1.1%）
+- Apple Event 也一起坏了：`osascript -e 'tell application "飞书" to activate'` 报 **-1728（不能获得该 application）**
+- `NSRunningApplication.activate()` 调了也不生效，`AXFrontmost` 恒为 False
+- `open -a` 重开窗口**无效**
+
+危险的地方在于：按 role 过滤后 `windows()` 返回空列表，**和"用户把窗口关了"完全一样**，于是 `ensure_window()` 会无限重试 `open -a`，永远等不到。
+
+已加 `ax_health(app)` 专门区分这三态，`ensure_window()` 撞上 `wedged` 会直接抛错而不是傻等：
+
+```python
+p.ax_health(app)   # 'ok' | 'no_window' | 'wedged'
+```
+
+**恢复方式只有重启飞书客户端。** 本次没有替用户重启（那是用户自己的聊天应用，且飞书本身还能正常用，只有 AX 层坏了），所以最后一次只读复验没跑成——但发消息、observer、选择器这些结论都是在此之前实测拿到的，证据是 message id `7679345486104415420` 和 `evidence/feishu_tree.txt`。用户重启飞书后可直接重跑复验。
+
+**#9 本机没有屏幕录制权限**
 
 `screencapture` 全部失败（`could not create image from display` / `from rect`），所以本报告**没有截图**，全部证据是 AX 树 dump 和读回的消息 id。要截图需要用户在「系统设置 → 隐私与安全性 → 屏幕录制」里授权宿主 app。
 
