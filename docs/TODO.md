@@ -92,3 +92,27 @@ The gate run locked itself partway through, leaving three things untested:
 the AX parsing chain end to end, whether focus suppression (L3) is needed at
 all, and whether a CEF app exposes its web tree once activated in the
 background. Re-run unlocked: `spikes/bg-gate/run-gate.sh`.
+
+## Rules the executor must follow (measured, not guessed)
+
+From `research/09-bg-gate-result.md`. Each of these silently produces a wrong
+answer if ignored.
+
+**A CEF tree is built by the act of reading it, per client, and it decays.**
+The first traversal from a given process returns a stub — often the menu bar
+alone, which is three hundred nodes and looks like a real tree. Read again.
+Every new process pays this, not just the first one ever.
+
+- Do not sleep a fixed interval and assume readiness. Poll until a web area
+  appears, then proceed; time out with an error rather than acting on a stub.
+- Judge readiness by the number of `AXWebArea` hits, never by total node count.
+  A menu bar alone clears any plausible node threshold.
+- Do not assert `AXManualAccessibility` or `AXEnhancedUserInterface` as a
+  precondition. Both are refused on macOS 26.3 and the tree arrives anyway.
+
+**A locked screen fails silently, and looks exactly like an app with no
+windows.** `AXWindows` returns the right count, but every entry is the
+application element itself. Check for this explicitly — `CFEqual(entry, app)` —
+and stop with a clear error. Without the check, a locked Mac reads as "this app
+has no window" and the caller retries forever against something that cannot
+recover on its own.

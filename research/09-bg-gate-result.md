@@ -7,6 +7,32 @@
 > **另见 §9：2026-08-30 20:19–20:34 解锁复跑**——CEF 吐树**成立**（后台、不需激活、不需 AXManualAccessibility）；纯公共 AX 的 `AXPress` 在后台 CEF 网页上**触发了真实 JS 事件**，前台是用户真实 Chrome 且全程未变、光标位移 0。20:34 二次自动锁屏，L3 与 contenteditable 写入未测完。
 >
 > 环境：macOS 26.3 (Build 25D125) / Darwin 25.3.0 / arm64 (T6020) / `AXIsProcessTrusted=true`
+
+---
+
+## ⚠️ 必须落进生产代码的两条实测结论
+
+**① CEF / Chromium 的 AX 树是「按 AT 客户端唤醒」的，不是常驻的。**（实测见 §9.2）
+
+- 建树的触发条件是**有 AT 客户端来遍历它**，不是 L2 激活，也不是设 `AXManualAccessibility`。
+  实测：首次读 window 子树 = 38 节点 / **0 个 AXWebArea**；我什么都没做，复读 = 44 节点 / **1 个 AXWebArea**。
+- **`AXManualAccessibility` 和 `AXEnhancedUserInterface` 在 macOS 26.3 上双双返回 false（被拒），而树照样有。**
+  07 规格 §6 把两属性断言当作必要前置步骤①——**在 26.3 上是无效动作**（无害但无用），不要据此 gate。
+- **唤醒按 AT 客户端进程计，而且会回落。** 我另起的一个进程首次遍历只拿到 311 节点（纯菜单栏、0 webArea），
+  哪怕间隔 500ms 双抓也没醒过来。
+- **生产实现要求**：
+  1. 「丢弃首次结果重抓」**不是一次性初始化，是每个新进程/新连接都要做的常态**；
+  2. **不要固定 `sleep(500ms)`**——要**轮询直到 `AXWebArea` 出现或超时**，并把「超时仍无 web 区」作为可诊断错误上报，
+     而不是让上层拿到一棵残缺树却以为是完整的；
+  3. 判活标准用「`AXWebArea` 命中数 > 0」，不要用节点总数（菜单栏本身就有 300+ 节点，很容易误判为"树已就绪"）。
+
+**② 锁屏会让窗口寻址整体失效，且失败方式是静默的。**（实测见 §0）
+
+- 锁屏下 `AXWindows` 返回的**每一项都 `CFEqual` 于应用元素本身**（数量还是对的），
+  于是 `AXPosition`/`AXSize` 失败、`_AXUIElementGetWindow` 失败、"窗口"标题变成 app 名。
+- 这不会报错，只会让整条链路悄悄拿到错的东西。**生产代码必须显式检查 `CFEqual(window, appElement)` 并拒绝继续**，
+  否则会把"锁屏"误诊成"这个 app 没有窗口"。
+- 反直觉的一条：**锁屏下私有 `postToPid` 路线仍能精确投递，公共 AX 路线则完全失效**（§7.4）。
 > 代码：`/Users/caosen/.claude/jobs/ae02c800/tmp/bggate/`（`./build.sh` 构建，`./run-gate.sh` 一键复跑）
 > 凭证：`bggate/evidence/*.json`（驱动侧报告）+ `bggate/logs/BgProbe*.log`（目标 app 自报）
 > 时间：2026-08-30 18:02–18:35
