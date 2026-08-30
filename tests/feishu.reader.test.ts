@@ -148,3 +148,15 @@ describe('tree helpers', () => {
     expect(hasDomClass('a')({ nodeId: 2, role: 'AXGroup' })).toBe(false);
   });
 });
+
+describe('self-chat detection without a placeholder', () => {
+  it('still recognises a self-chat when a draft has replaced the placeholder', async () => {
+    const { isSelfChat } = await import('../src/perception/feishu/messages.js');
+    // Placeholder gone (there is a draft), but the title is the user's own name.
+    expect(isSelfChat('', '曹良欢（Sion）', '曹良欢（Sion）')).toBe(true);
+    // Someone else's chat with a draft stays false.
+    expect(isSelfChat('', '张三', '曹良欢（Sion）')).toBe(false);
+    // No self name configured: fall back to the placeholder alone.
+    expect(isSelfChat('', '曹良欢（Sion）', '')).toBe(false);
+  });
+});
