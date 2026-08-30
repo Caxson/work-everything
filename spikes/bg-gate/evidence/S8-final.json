@@ -1,0 +1,17 @@
+{
+  "activeApp" : "loginwindow",
+  "activePID" : 406,
+  "axTrusted" : true,
+  "cursor" : [
+    223.41796875,
+    975.96484375
+  ],
+  "frontmost" : "loginwindow",
+  "frontmostPID" : 406,
+  "pid" : 83485,
+  "spi" : {
+    "axGetWindow" : true,
+    "axObserverRemote" : false,
+    "setWindowLocation" : true
+  }
+}

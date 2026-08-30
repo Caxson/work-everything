@@ -1,0 +1,61 @@
+{
+  "axWindows" : [
+    {
+      "cgTitle" : "",
+      "frame" : [
+
+      ],
+      "index" : 0,
+      "isFocused" : false,
+      "isMain" : false,
+      "layer" : 0,
+      "resolvedBy" : "fallbackLayer0",
+      "title" : "BgProbeB",
+      "windowNumber" : 95434
+    }
+  ],
+  "cgWindows" : [
+    {
+      "alpha" : 1,
+      "bounds" : [
+        0,
+        617,
+        500,
+        500
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95434
+    },
+    {
+      "alpha" : 1,
+      "bounds" : [
+        1857,
+        467,
+        122,
+        97
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95433
+    },
+    {
+      "alpha" : 1,
+      "bounds" : [
+        772,
+        482,
+        312,
+        237
+      ],
+      "layer" : 101,
+      "name" : "",
+      "number" : 95437
+    }
+  ],
+  "pid" : 59116,
+  "spi" : {
+    "axGetWindow" : true,
+    "axObserverRemote" : false,
+    "setWindowLocation" : true
+  }
+}

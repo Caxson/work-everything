@@ -34,6 +34,7 @@ import { FeishuReader } from '../dist/perception/feishu/reader.js';
 import { ChatRouteTable } from '../dist/perception/feishu/chatRoutes.js';
 import { feishuHealthMonitor } from '../dist/perception/feishu/reader.js';
 import { SentLedger } from '../dist/perception/feishu/sentLedger.js';
+import { SELF_CHAT_PLACEHOLDER } from '../dist/perception/feishu/selectors.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../dist/execution/feishu/sender.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,7 +47,11 @@ mkdirSync(outDir, { recursive: true });
 
 const evidence = (name, body) => {
   const path = join(outDir, name);
-  writeFileSync(path, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+  // `JSON.stringify(undefined)` is `undefined`, which `writeFileSync` rejects.
+  // A step that produced nothing is itself a finding worth recording, so the
+  // absence is written as `null` rather than crashing the run that found it.
+  const text = typeof body === 'string' ? body : (JSON.stringify(body, null, 2) ?? 'null');
+  writeFileSync(path, text);
   return path;
 };
 const say = (line) => process.stdout.write(`${line}\n`);
@@ -121,7 +126,13 @@ async function main() {
   if (!before.isSelfChat) fatal(`"${chat}" is not a chat with yourself; this harness refuses to message anyone else`);
   // Sending starts with Cmd+A, Delete. An unsent draft in the composer is
   // someone's words, and this harness will not be what erases them.
-  if (!draftIsEmpty(before.composerText)) fatal(`the composer already contains a draft (${JSON.stringify(before.composerText)}); clear it and rerun`);
+  if (!draftIsEmpty(before.composerText)) {
+    // A draft belongs to the user, so it is preserved as evidence before the
+    // send overwrites the composer — never silently discarded. Only ever in a
+    // chat with yourself, which the gate above has already established.
+    const kept = evidence('00-composer-draft-preserved.txt', before.composerText);
+    say(`composer held a draft ${JSON.stringify(before.composerText)}; saved to ${kept} before overwriting`);
+  }
   step('0 safety gate', `self-chat "${chat}" open, composer empty`, `"${before.chatTitle}", selfChat=true, no draft`, true, '00-snapshot-before.json');
 
   // --- 1. start the daemon -------------------------------------------------
@@ -228,7 +239,11 @@ async function waitFor(probe, timeoutMs, intervalMs) {
   return (await poll(async () => (await probe()) || undefined, timeoutMs, intervalMs)) === true;
 }
 
-const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+function sleep(ms) {
+  // Declared, not assigned to a const: `waitFor` above calls it, and a const
+  // arrow would still be in its temporal dead zone at that point.
+  return new Promise((done) => setTimeout(done, ms));
+}
 
 function run(command, argv) {
   return new Promise((done) => {
@@ -279,10 +294,19 @@ function checkBridgeIsFresh() {
   }
 }
 
-/** The composer reads back as its placeholder when nothing is typed. */
+/**
+ * The composer reads back as its placeholder when nothing is typed.
+ *
+ * Feishu renders the placeholder into the composer's own text leaves, and it
+ * is not the bare hint string: on a Mac with dictation it is prefixed (e.g.
+ * `按住 fn 说话可以向自己发送文件或转发消息`) and padded with zero-width
+ * characters. Matching a prefix therefore reads a placeholder as a draft and
+ * refuses to run, so the hint is looked for anywhere in the text, using the
+ * same constant the parser uses to identify a self-chat.
+ */
 function draftIsEmpty(composerText) {
   const squashed = composerText.replace(/(?:\s|\u200B|\u200C|\u200D|\uFEFF)+/gu, '');
-  return squashed === '' || squashed.startsWith('可以向自己发送文件或转发消息') || squashed.startsWith('发送给');
+  return squashed === '' || squashed.includes(SELF_CHAT_PLACEHOLDER) || squashed.includes('发送给');
 }
 
 function fatal(message) {

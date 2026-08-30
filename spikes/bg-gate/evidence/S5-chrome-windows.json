@@ -1,0 +1,85 @@
+{
+  "axWindows" : [
+    {
+      "cgTitle" : "",
+      "frame" : [
+
+      ],
+      "index" : 0,
+      "isFocused" : false,
+      "isMain" : false,
+      "layer" : 0,
+      "resolvedBy" : "fallbackLayer0",
+      "title" : "Chrome",
+      "windowNumber" : 95480
+    }
+  ],
+  "cgWindows" : [
+    {
+      "alpha" : 1,
+      "bounds" : [
+        1861,
+        197,
+        118,
+        116
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95480
+    },
+    {
+      "alpha" : 1,
+      "bounds" : [
+        0,
+        0,
+        1,
+        1
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95484
+    },
+    {
+      "alpha" : 1,
+      "bounds" : [
+        0,
+        0,
+        1,
+        1
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95483
+    },
+    {
+      "alpha" : 1,
+      "bounds" : [
+        161,
+        80,
+        738,
+        89
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95482
+    },
+    {
+      "alpha" : 1,
+      "bounds" : [
+        161,
+        80,
+        738,
+        107
+      ],
+      "layer" : 0,
+      "name" : "",
+      "number" : 95481
+    }
+  ],
+  "pid" : 77057,
+  "spi" : {
+    "axGetWindow" : true,
+    "axObserverRemote" : false,
+    "setWindowLocation" : true
+  }
+}
