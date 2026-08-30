@@ -46,9 +46,18 @@ expose no action, and clicking into a CEF app that refuses
 `AXManualAccessibility`. That narrows the private surface to two field numbers,
 detectable by behaviour, with a whole-path fallback when they stop working.
 
-One piece of evidence is still missing before this is settled: whether a CEF
-app exposes its web tree at all on macOS 26.3. The run that would have told us
-was confounded by the lock.
+That missing piece has since been measured, and it favours the public path.
+With the screen unlocked, Feishu — a CEF app, not frontmost, never activated —
+exposes its window and both web areas on a plain read: the conversation list,
+the open chat, and a complete parse of the chat on screen. Being refused
+`AXManualAccessibility` turns out not to matter, which contradicts the spec's
+claim that asserting those two attributes is a prerequisite; the measurement
+wins. The earlier reading of a tree that was nothing but menu items was the
+lock, not the app.
+
+So reading Feishu needs no private dispatch at all. What is still unmeasured is
+where that stops: whether the tree survives the window being fully occluded,
+minimised, or closed to the tray.
 
 ## The constraint that matters most
 
