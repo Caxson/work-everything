@@ -63,3 +63,32 @@ Everything known to be missing or provisional in this skeleton lives here.
 - The database is never compacted or pruned.
 - `we replay` re-derives the routing decision only. It does not re-execute a
   chain against recorded tool results.
+
+## A locked screen removes window addressing
+
+Measured on macOS 26.3: while the Mac is locked, `AXPosition`, `AXSize` and
+`_AXUIElementGetWindow` fail for every application. The event channel itself
+survives, and `CGWindowList` still answers, so a window can be reached if its
+number is already known — but nothing can find that number through the
+accessibility API.
+
+This sits directly under the premise of the project. A computer left to work
+on its own is a locked computer, and that is precisely when addressing stops
+working. Unresolved. Directions worth measuring, none of them verified:
+
+- address windows through `CGWindowList` instead, and act by window number
+- hold the session awake (`caffeinate`) and treat the display, not the
+  session, as the thing that sleeps
+- accept it: perceive while locked, queue anything that acts, run it on unlock
+
+Whichever way this lands, it belongs in the trust gate too — a queued action
+that runs much later is not the action the user confirmed.
+
+See `research/09-bg-gate-result.md` §0.
+
+## Unmeasured, blocked by the same lock
+
+The gate run locked itself partway through, leaving three things untested:
+the AX parsing chain end to end, whether focus suppression (L3) is needed at
+all, and whether a CEF app exposes its web tree once activated in the
+background. Re-run unlocked: `spikes/bg-gate/run-gate.sh`.
