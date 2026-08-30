@@ -25,12 +25,40 @@ turned out to be unnecessary for the case measured — but 51/58 have no
 fallback at all: without them the event does not go to the wrong window, it
 disappears.
 
+## Public AX and private dispatch are not an either/or
+
+Codex reaches background windows through public accessibility APIs alone, and
+its coordinate clicks turn out to be `AXUIElementCopyElementAtPosition` — a
+hit-test to an element, then an action on it, never a synthetic event. That is
+the better default: nothing private, nothing that a system update can quietly
+take away.
+
+It is not sufficient on its own, and the reason is the lock. Measured on this
+machine: **while the screen is locked, public AX collapses** — window elements
+come back as the application element itself, hit-testing fails outright, and
+the tree is reduced to a menu bar — **while private dispatch keeps landing its
+clicks.** The private path is weakest exactly where it is least needed, and
+strongest where nothing else works.
+
+So: public AX as the default path, private dispatch kept for the gaps it alone
+covers — free-form dragging (AX has no drag action), custom-drawn elements that
+expose no action, and clicking into a CEF app that refuses
+`AXManualAccessibility`. That narrows the private surface to two field numbers,
+detectable by behaviour, with a whole-path fallback when they stop working.
+
+One piece of evidence is still missing before this is settled: whether a CEF
+app exposes its web tree at all on macOS 26.3. The run that would have told us
+was confounded by the lock.
+
 ## The constraint that matters most
 
-**A locked screen takes window addressing away entirely.** `AXPosition`,
-`AXSize` and `_AXUIElementGetWindow` fail for every app while the Mac is
-locked; the event channel itself keeps working, and `CGWindowList` still
-answers. This lands directly on the premise that the computer can be left
+**A locked screen takes window addressing away entirely.** The mechanism is
+specific: `AXWindows` still returns the right *count*, but every entry is the
+application element itself — `CFEqual(item, appElement)` holds for each one.
+That single substitution explains everything downstream: titles equal to the
+app name, `AXPosition` and `AXSize` failing, `_AXUIElementGetWindow` failing,
+and a walk from a "window" arriving in the menu bar. The event channel itself
+keeps working, and `CGWindowList` still answers. This lands directly on the premise that the computer can be left
 alone to work — a locked screen is exactly when that is supposed to happen.
 Unresolved, and tracked in `docs/TODO.md`.
 
