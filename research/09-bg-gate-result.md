@@ -488,3 +488,36 @@ STATE isActive=true  front=loginwindow  W1/95463 isKey=true isMain=true
 1. 在**我自己新开的一个空白 contenteditable 页面**上测 `setValue` + `AXPress` + `AXConfirm`，确认公共 AX 能否写 contenteditable。这决定执行层形态，且完全不需要碰飞书。
 2. L3 抑制必要性的「无 tap」一臂。
 3. 私有 postToPid 路径解锁态不变量复测。
+
+---
+
+## 10. 第三轮已就位（等解锁，20:34 起一直锁着）
+
+第二次锁屏后至今未解锁，CEF 边界四问一条都跑不了。鉴于前两轮的解锁窗口只有 7 分钟和 15 分钟、而我逐条手敲太慢，本轮把**剩余全部实验脚本化为一次运行（约 90 秒）**：
+
+**`bggate/run-round2.sh`**（`bash -n` 通过，锁屏守卫实测 `exit 90` 正常）
+
+| 步骤 | 测什么 | 判据 |
+|---|---|---|
+| S2 | **CEF ①** 后台 + 未遮挡 | window 子树 nodes / webAreas |
+| S3 | **CEF ④** 激活前后增量 | 两次读数相同 ⇒ L2 激活对 CEF 出树零贡献 |
+| S5 | AX 解析链 | `resolvedBy` 应为 `axSPI` |
+| S6 | **CEF ②** 被完全遮挡 | 先把 ProbeB 窗口移到与 Chrome 完全重合（探针后启动天然在上层，**不用 AXRaise**以免抢焦点），再用 `AXUIElementCopyElementAtPosition` 在中心点命中测试确认遮挡属实（返回 pid 应为 ProbeB），然后读树 |
+| S7 | **CEF ③** 最小化 | `setwin --minimized true` → 读树 → 还原再读 |
+| S8 | **contenteditable 可写性** | 测试页含 `<div contenteditable>` 并监听 `input/beforeinput/keydown/focus`，页面自报收到哪些事件——**只有出现 input/beforeinput 才算真写入**，只有 `readBack` 变了不算 |
+| S9 | **L3 arm1**：不装 tap 时激活是否抢前台 | `frontmostUnchanged`。为 true 则 L3 整层可能不需要 |
+| S10 | **L3 arm2**：装 tap（**只装自己的 ProbeA**）+ 抑制期输入不误伤 | `tapStats.dropped` + ProbeA 是否完整收到文本 |
+| S11 | 私有 postToPid 解锁态不变量 | 真实前台下的 `frontmostUnchanged` + `cursorDelta` |
+
+配套新增：
+- `bggate/testpage.html` —— 自建测试页（`<h1>` / `<button onclick>` / `<input>` / `<div contenteditable>` + 事件自报），走 `file://` 加载，避免 data URL 的转义地狱。
+- `bggate/out/axact.swift` 新增 `setwin`（用公共 AX 改窗口 position/size/minimized，用于构造遮挡与最小化场景）。
+- `bggate/out/jget.py` —— JSON 取值统一走它。**踩过的坑**：`sed` 的范围匹配 `/"window"/,/}/` 会被嵌套的 `roles` 对象的 `}` 提前截断，导致 `webAreas` 静默抽空；脚本里所有取值因此不再用 sed。
+
+**没有做自动等待解锁再触发**：写过一版轮询解锁即自动开跑的守候脚本，被权限分类器拦下，我没有绕。这个判断是对的——趁用户刚解锁的瞬间自动拉起 GUI 自动化，本来就该由人点这一下。解锁后手动跑一条命令即可：
+
+```bash
+cd /Users/caosen/.claude/jobs/ae02c800/tmp/bggate && ./run-round2.sh
+```
+
+**目前最大的效率损耗是自动锁屏**：三轮里两轮被锁断（18:09、20:34）。建议临时把锁屏时间调长或关掉再跑。
