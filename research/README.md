@@ -55,9 +55,28 @@ claim that asserting those two attributes is a prerequisite; the measurement
 wins. The earlier reading of a tree that was nothing but menu items was the
 lock, not the app.
 
-So reading Feishu needs no private dispatch at all. What is still unmeasured is
-where that stops: whether the tree survives the window being fully occluded,
-minimised, or closed to the tray.
+Acting on it may not either. `AXPress` on a `<button onclick>` inside a
+background Chrome page ran the page's own JavaScript — the heading changed —
+while the frontmost application stayed exactly where the user left it and the
+cursor did not move a pixel. Public accessibility reaches into web content, not
+just native controls.
+
+Two things about CEF trees are worth writing into any implementation. The tree
+is built by the *first traversal itself*: a first read returned 38 nodes and no
+web area, an immediate second read returned 44 and one, with nothing done in
+between. And that waking is counted per accessibility client and decays — a
+separate process's first traversal saw 311 nodes, all menu bar. So discarding
+the first result and reading again is not one-time setup; every new process
+pays it, and a fixed sleep is not enough. Poll until a web area appears.
+
+Asserting `AXManualAccessibility` and `AXEnhancedUserInterface` is not part of
+this. Both are refused on 26.3 and the tree is there regardless.
+
+What is still unmeasured: whether the tree survives the window being fully
+occluded, minimised, or closed to the tray — and, the one that decides the
+shape of the executor, whether text can be written into a `contenteditable`
+composer through accessibility at all. Feishu's is almost certainly one, and
+`AXValue` is typically not settable on them.
 
 ## The constraint that matters most
 

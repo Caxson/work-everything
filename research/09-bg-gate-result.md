@@ -4,6 +4,7 @@
 > 未判定的子问题（L3 抑制的真实必要性、CEF 出树、公共 AX 路线的后台可用性）全部因为**测试期间屏幕处于锁定状态**——这本身是一条规格完全没写的硬约束，其确切机制已在 §0 定位。
 >
 > **另见 §7：公共 AX 路线（OpenAI Codex computer-use）的符号级核验与覆盖度评估**——它可能让整条私有路线降级为兜底。
+> **另见 §9：2026-08-30 20:19–20:34 解锁复跑**——CEF 吐树**成立**（后台、不需激活、不需 AXManualAccessibility）；纯公共 AX 的 `AXPress` 在后台 CEF 网页上**触发了真实 JS 事件**，前台是用户真实 Chrome 且全程未变、光标位移 0。20:34 二次自动锁屏，L3 与 contenteditable 写入未测完。
 >
 > 环境：macOS 26.3 (Build 25D125) / Darwin 25.3.0 / arm64 (T6020) / `AXIsProcessTrusted=true`
 > 代码：`/Users/caosen/.claude/jobs/ae02c800/tmp/bggate/`（`./build.sh` 构建，`./run-gate.sh` 一键复跑）
@@ -409,3 +410,81 @@ STATE isActive=true  front=loginwindow  W1/95463 isKey=true isMain=true
    `./out/axact setvalue --pid <PB> --identifier probe-input --value hello` → 应出现 `field[...]=hello`；
    `./out/axact hittest --x <按钮屏幕x> --y <按钮屏幕y>` → 应返回 role=AXButton。
    四条全过 = 公共 AX 在后台可用，私有路线可降级为兜底。
+
+---
+
+## 9. 解锁复跑（2026-08-30 20:19–20:34，第二次自动锁屏打断）
+
+解锁窗口只有 15 分钟：20:19 开跑，**20:34:09 系统再次自动锁屏**。按约定停下。
+下面 U1–U9 全部在 20:33:26 之前完成，**均为解锁态有效测量**；20:34 之后的三份已改名为 `evidence/INVALID-postlock-*.json`，不作数。
+
+前台环境：全程是**用户自己的 Google Chrome（pid 39915）**——真实用户 app，不再是 loginwindow。这让本轮的「不抢前台」判据具备完整强度。
+
+### 9.1 验证项 2：AX 解析链 — **完全恢复** ✅
+
+| | |
+|---|---|
+| 动作 | 后台启动双窗口探针（`activates=false`），`bgdrive windows --pid` |
+| 实测 | `resolvedBy: **axSPI**`（`_AXUIElementGetWindow` 正常）；窗口号 95543 / 95545 **与探针自报逐位一致**；标题是真实窗口标题 `BgProbeB W0` / `BgProbeB W1`；`isMain` 正确识别；AX 按 z 序返回（index 0 = 前窗口 W1） |
+| 对照 | 锁屏时的「每项 `CFEqual(item, appElement)` 为 true」顶替现象**完全消失** |
+| 证据 | `evidence/U1-launch*.json`、`U2-ax-resolution.json` |
+
+`configuration.activates = false` 再次确认有效：两个探针起来后，前台仍是用户的 Chrome。
+
+### 9.2 验证项 1：CEF 能否吐树 — **成立** ✅（本轮最关键结论）
+
+目标是我自己启动的独立 profile Chrome（`--user-data-dir` + data URL 页面，含 `<h1>`/`<button onclick>`/`<input>`），pid 16127，**全程后台**（前台始终是用户的 Chrome）。
+
+| 步骤 | window 子树 | app 树 | AXWebArea |
+|---|---|---|---|
+| 首次读（U4） | 38 节点，只有 toolbar/tab/地址栏 | 354 节点 | window **0** / app **1** |
+| 复读（U5） | **44 节点** | 355 节点 | **1 / 1**，读到 `<h1>` 文本 `bggate probe` |
+| 设两属性 + AXObserver + 800ms 后重扫（U6） | 44 节点 | 355 节点 | 1 / 1 —— **与复读完全相同，零增量** |
+
+**结论链：**
+1. **CEF 在后台就能吐出完整 web 内容树，不需要 L2 激活。**
+2. **不需要 `AXManualAccessibility`**——实测它和 `AXEnhancedUserInterface` 在 macOS 26.3 上**双双返回 false（被拒）**，而树照样有。规格 §6 把两属性断言当作步骤①，在 26.3 上是无效动作（无害但无用）。
+3. **唤醒机制是「有 AT 客户端来查询」本身**。首次读的 window 子树 0 个 webArea、复读 1 个，中间我什么都没做——是第一次遍历触发了 Chromium 建树。
+4. **代价：首次查询必然拿到残缺树，必须丢弃重抓。** 这正是规格 §6「激活后重抓」的语义，但触发条件不是「激活」而是「首次查询」。
+5. **唤醒是按 AT 客户端进程计的，而且会回落。** 我另起的 `axact` 进程首次遍历只拿到 311 节点（纯菜单栏，0 webArea），双次遍历（间隔 500ms）也没醒过来。所以「丢弃首次重抓」**不是一次性初始化，是每个新进程都要做的常态**，且 500ms 不一定够。生产实现应做「轮询到 `AXWebArea` 出现或超时」，而不是固定睡一觉。
+6. AXObserver：创建成功、13 个通知全部注册成功，但走的是**非 SPI 降级路径**（`usedRemoteSPI: false`，因为 `_AXObserverAddNotificationAndCheckRemote` 在 26.3 已不存在）。降级路径可用。
+
+### 9.3 公共 AX 写操作打进后台 CEF 网页 — **成立** ✅
+
+| | |
+|---|---|
+| 动作 | `AXUIElementPerformAction(pageButton, kAXPressAction)`，目标是后台 Chrome 页面里的 `<button id=b onclick="...">ClickMe</button>` |
+| 期望 | 要么无效，要么只是"点了一下"但 JS 不触发 |
+| 实测 | ✅ `result: success`，且**页面 JS onclick 真的执行了**——`<h1>` 文本从 `bggate probe` 变成 **`CLICKED`**（U9 复查 AXHeading/AXStaticText 均为 `CLICKED`） |
+| 不变量 | `frontmostBefore = frontmostAfter = Google Chrome`（**用户的真实前台 app**），`cursorDelta = 0` |
+| 证据 | `evidence/U7-chrome-elements.json`、`U8-chrome-axpress.json`、`U9-chrome-after-press.json` |
+
+这一条的分量：**纯公共 AX，零事件合成，就能在后台 CEF 页面里触发真实 DOM 事件**，而且不抢真实用户的前台、不动光标。web 元素在 AX 树里带 `AXPress`（`ClickMe` 按钮的 actions = `[AXPress, AXShowMenu, AXScrollToVisible]`），可直接驱动。
+
+**这是完整强度的「不抢前台」证据**——前台是用户真实在用的 Chrome，不是锁屏的 loginwindow，补上了 §S6 打折的那部分。
+
+### 9.4 本轮未完成（二次锁屏打断）
+
+| 项 | 状态 | 备注 |
+|---|---|---|
+| L3 抑制必要性 | ❌ 未开始 | 计划是先跑「不装 tap」一臂纯观察前台是否被抢（不给用户的 Chrome 装 tap），被锁屏打断 |
+| 私有 postToPid 路径的解锁态不变量复测 | ❌ 未开始 | 本轮按优先级先做 CEF，没轮到 |
+| 页面输入框 `setValue` | ❌ 未测成 | 唯一一次尝试落在锁屏之后（已作废）。这是公共路线最关键的未知，见 §9.5 |
+| 探针 app（原生 AppKit）上的公共 AX 动作 | ❌ 未开始 | |
+
+### 9.5 飞书（CEF）覆盖度评估 — 区分实测与推断
+
+**实测已支撑的部分**（本轮在 Chrome 上直接量到）：
+- **读消息列表**：CEF 后台吐树成立，`AXWebArea` 下的文本可读 → 读取路径成立。
+- **点发送按钮**：网页 `<button>` 在 AX 树里带 `AXPress`，且 `AXPress` 会触发真实 JS handler → 只要飞书的发送按钮是可访问按钮，这条成立。
+
+**推断，尚未实测**（必须标注清楚，不能当结论用）：
+- **写输入框是最大未知**。飞书输入框大概率是 `contenteditable`，而不是 `<input>`。`AXUIElementSetAttributeValue(kAXValue)` 对 contenteditable 通常**不可设**（`AXUIElementIsAttributeSettable` 会返回 false）。本轮唯一一次 `setvalue` 尝试落在锁屏后作废，**没有任何实测数据**。这一条不解决，公共路线能否覆盖飞书的「写」就是未知数。
+- **虚拟滚动**：飞书消息列表是虚拟列表，AX 树里只有已渲染的部分，读历史必须滚动。公共 AX 的滚动走 `AXScrollBar` 的 `AXIncrement/AXDecrement`，是否对飞书的自定义滚动容器有效，未测。
+- **@ 提及候选框、富文本、图片/文件**：未测。
+- **首次查询残缺树**在飞书这种大树上代价更高，需要轮询而非固定等待。
+
+**下一轮必须先做的三件事**（按价值排序）：
+1. 在**我自己新开的一个空白 contenteditable 页面**上测 `setValue` + `AXPress` + `AXConfirm`，确认公共 AX 能否写 contenteditable。这决定执行层形态，且完全不需要碰飞书。
+2. L3 抑制必要性的「无 tap」一臂。
+3. 私有 postToPid 路径解锁态不变量复测。
