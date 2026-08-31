@@ -15,7 +15,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'tree':
       return send({ id: req.id, ok: true, result: { ...node, children: [{ nodeId: 11, role: 'AXStaticText', value: 'hi' }] } });
     case 'find':
-      return send({ id: req.id, ok: true, result: [node] });
+      // `meta: true` asks for the traversal budget alongside the hits.
+      return send({ id: req.id, ok: true, result: req.meta === true ? { nodes: [node], visited: 2, truncated: false } : [node] });
+    case 'awaitTree':
+      return send({ id: req.id, ok: true, result: { ready: true, nodes: 2, webAreas: 1, truncated: false, polls: 1, elapsedMs: 3 } });
+    case 'focusAndType':
+      return send({ id: req.id, ok: true, result: { ok: true, focused: { action: 'AXPress' }, typed: { characters: String(req.text ?? '').length } } });
     case 'attr':
       return send({ id: req.id, ok: true, result: 'Send' });
     case 'observe':
@@ -27,6 +32,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'press':
     case 'focus':
     case 'keystroke':
+    case 'click':
     case 'unobserve':
       return send({ id: req.id, ok: true, result: {} });
     case 'malformed':

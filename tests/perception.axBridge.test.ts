@@ -46,6 +46,31 @@ describe('ax bridge client', () => {
     await expect(c.unobserve(7)).resolves.toBeUndefined();
   });
 
+  it('clicks a node or a point, and refuses a click with neither', async () => {
+    const c = start();
+    await expect(c.click({ nodeId: 10, button: 'right', clickCount: 2 })).resolves.toBeUndefined();
+    await expect(c.click({ x: 4, y: 5 })).resolves.toBeUndefined();
+    await expect(c.click({})).rejects.toThrow(/needs a nodeId, or both x and y/);
+  });
+
+  it('performs a named accessibility action, not only AXPress', async () => {
+    const c = start();
+    await expect(c.press(10, 'AXScrollDownByPage')).resolves.toBeUndefined();
+  });
+
+  it('asks for a traversal budget alongside the hits', async () => {
+    const c = start();
+    const budget = await c.findWithBudget(42, { role: 'AXButton' }, { maxDepth: 10, maxNodes: 100 });
+    expect(budget.visited).toBe(2);
+    expect(budget.nodes[0]?.title).toBe('Send');
+  });
+
+  it('waits for a tree through the helper, and types through the hybrid route', async () => {
+    const c = start();
+    expect(await c.awaitTree({ pid: 42, timeoutMs: 100, pollMs: 10, maxDepth: 10, maxNodes: 100 })).toMatchObject({ ready: true, webAreas: 1, polls: 1 });
+    expect(await c.focusAndType({ pid: 42, nodeId: 10, text: 'hi' })).toMatchObject({ focused: { action: 'AXPress' } });
+  });
+
   it('correlates concurrent requests by id', async () => {
     const c = start();
     const [trusted, apps] = await Promise.all([c.trusted(), c.apps()]);

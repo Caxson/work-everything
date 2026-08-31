@@ -2,12 +2,13 @@
  * A stand-in for `we-ax` that behaves like Feishu.
  *
  * It speaks the real NDJSON protocol over real pipes, so the sender under test
- * exercises its actual transport, and it models the three Feishu behaviours the
- * send path depends on: the composer only takes focus from a click, Enter is
- * the send key, and a sent message appears in the conversation as `message-self`.
+ * exercises its actual transport, and it models the Feishu behaviours the send
+ * path depends on: the composer only takes text through `focusAndType`, which
+ * refuses to type at all unless focus landed; Enter is the send key; and a sent
+ * message appears in the conversation as `message-self`.
  *
  * Every request is echoed to stderr as `LOG <json>` so a test can assert on the
- * exact sequence of clicks and keystrokes — including that none were sent.
+ * exact sequence of input operations — including that none were sent.
  */
 import { createInterface } from 'node:readline';
 import { appendFileSync } from 'node:fs';
@@ -83,7 +84,8 @@ function buildTree() {
         {
           nodeId: 200,
           role: 'AXWebArea',
-          title: 'messenger-chat',
+          // With no conversation open, Feishu still renders the list webview.
+          title: process.env['FAKE_CHAT_CLOSED'] === '1' ? 'messenger' : 'messenger-chat',
           children: [
             node('AXGroup', { domClasses: ['chatWindow_chatName'], children: [node('AXStaticText', { value: CHAT_TITLE })] }),
             node('AXGroup', { domClasses: ['chatMessages'], children: state.messages.map(messageNode) }),
@@ -119,7 +121,9 @@ function keystroke(params) {
   }
   if (key === 'return') {
     const text = state.composer.join('\n').trim();
-    if (text !== '') {
+    // A conversation that never renders the sent message back: the send
+    // happened, the echo did not arrive.
+    if (text !== '' && process.env['FAKE_NO_ECHO'] !== '1') {
       state.nextId += 1n;
       state.messages = [...state.messages, { id: String(state.nextId), self: true, kind: 'text-message', text }];
     }
@@ -131,6 +135,53 @@ function keystroke(params) {
   state.composer = [...state.composer.slice(0, -1), last + key];
   state.selectAll = false;
   return { ok: true, mode: 'unicode' };
+}
+
+/** How many elements a full traversal would walk. */
+function countNodes() {
+  let count = 0;
+  const visit = (node) => {
+    count += 1;
+    for (const child of node.children ?? []) visit(child);
+  };
+  for (const root of buildTree()) visit(root);
+  return count;
+}
+
+/**
+ * The hybrid write route: focus, then type. Refuses to type a single
+ * character unless focus landed — which is the guarantee the sender depends
+ * on, and the reason the two are one operation rather than two.
+ */
+function focusAndType(params) {
+  if (params.nodeId === undefined) {
+    return { __error: { code: 'BAD_REQUEST', message: "focusAndType needs a 'nodeId'" } };
+  }
+  const landed = process.env['FAKE_FOCUS_FAILS'] !== '1' && params.nodeId === COMPOSER_NODE;
+  if (!landed) {
+    state.focused = false;
+    return { __error: { code: 'FOCUS_FAILED', message: 'could not put the caret in the target element; sent no keystrokes' } };
+  }
+  state.focused = true;
+  const text = String(params.text ?? '');
+  // A write that reports success and lands nothing: exactly what an
+  // accessibility write does to a contenteditable.
+  if (process.env['FAKE_SWALLOW_TEXT'] === '1') return { ok: true, focused: { action: 'AXPress' }, typed: { characters: 0 } };
+  if (text !== '') {
+    const last = state.composer[state.composer.length - 1] ?? '';
+    state.composer = [...state.composer.slice(0, -1), last + text];
+    state.selectAll = false;
+  }
+  return { ok: true, focused: { action: 'AXPress' }, typed: { characters: text.length } };
+}
+
+/** Readiness, judged the way the helper judges it: by web areas. */
+function awaitTree() {
+  const webAreas = process.env['FAKE_NO_WEB_AREA'] === '1' ? 0 : 1;
+  if (webAreas === 0) {
+    return { __error: { code: 'TREE_NOT_READY', message: 'no AXWebArea appeared; the menu bar alone is not the window' } };
+  }
+  return { ready: true, nodes: countNodes(), webAreas, truncated: false, polls: 1, elapsedMs: 1 };
 }
 
 /** The `find` op: a flat, pre-order scan matching every supplied selector field. */
@@ -179,8 +230,12 @@ function handle(request) {
       return process.env['FAKE_NO_WINDOW'] === '1' ? [] : [{ index: 0, nodeId: WINDOW_NODE, role: 'AXWindow', title: '飞书' }];
     case 'tree':
       return buildTree();
-    case 'find':
-      return process.env['FAKE_NO_WEB_AREA'] === '1' ? [] : find(request);
+    case 'find': {
+      const hits = process.env['FAKE_NO_WEB_AREA'] === '1' ? [] : find(request);
+      // `meta: true` asks for the traversal budget as well: that is how the
+      // action layer tells a tree that is still being built from a finished one.
+      return request.meta === true ? { nodes: hits, visited: countNodes(), truncated: false } : hits;
+    }
     case 'attr':
       return attr(request);
     case 'click':
@@ -188,6 +243,10 @@ function handle(request) {
       return { ok: true };
     case 'keystroke':
       return keystroke(request);
+    case 'focusAndType':
+      return focusAndType(request);
+    case 'awaitTree':
+      return awaitTree();
     case 'observe':
       subscriptions.add(1);
       return { subscription: 1, registered: 3, failed: [] };
@@ -210,8 +269,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     out({ id: -1, ok: false, error: { code: 'BAD_REQUEST', message: 'not JSON' } });
     return;
   }
-  audit({ op: request.op, key: request.key, modifiers: request.modifiers, nodeId: request.nodeId });
+  audit({ op: request.op, key: request.key, modifiers: request.modifiers, nodeId: request.nodeId, text: request.text, replace: request.replace });
   const result = handle(request);
   if (result === null) out({ id: request.id, ok: false, error: { code: 'BAD_REQUEST', message: `unsupported op '${request.op}'` } });
+  else if (result !== undefined && result.__error !== undefined) out({ id: request.id, ok: false, error: result.__error });
   else out({ id: request.id, ok: true, result });
 });

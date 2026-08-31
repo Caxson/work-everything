@@ -36,6 +36,13 @@ import { feishuHealthMonitor } from '../dist/perception/feishu/reader.js';
 import { SentLedger } from '../dist/perception/feishu/sentLedger.js';
 import { SELF_CHAT_PLACEHOLDER } from '../dist/perception/feishu/selectors.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../dist/execution/feishu/sender.js';
+import { ActionRegistry } from '../dist/actions/registry.js';
+import { SnapshotStore } from '../dist/actions/snapshot.js';
+import { AutoWait } from '../dist/actions/wait.js';
+import { bridgeKeyboardRoute } from '../dist/actions/keyboard.js';
+import { systemClipboard } from '../dist/actions/clipboard.js';
+import { MacAxDriver } from '../dist/actions/drivers/macAx.js';
+import { BrowserCdpDriver } from '../dist/actions/drivers/browserCdp.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PING = 'we ping';
@@ -70,21 +77,42 @@ const reader = new FeishuReader(client, {
   bundleId: config.feishu.bundleId,
   appPath: config.feishu.appPath,
   selfName: config.feishu.selfName,
-  windowTimeoutMs: config.feishu.windowTimeoutMs,
 });
 const monitor = feishuHealthMonitor(client, reader);
+
+// The same action layer the daemon runs on, assembled the same way: the
+// browser driver first, the accessibility driver — which claims everything —
+// last.
+const snapshots = new SnapshotStore();
+const wait = new AutoWait({ settleMs: config.actions.settleMs, maxWaitMs: config.actions.maxWaitMs, pollMs: config.actions.pollMs });
+const actions = new ActionRegistry([
+  new BrowserCdpDriver({ snapshots, wait, targets: config.actions.browsers }),
+  new MacAxDriver({
+    client,
+    keyboard: bridgeKeyboardRoute(client),
+    snapshots,
+    wait,
+    clipboard: systemClipboard,
+    config: {
+      treeMaxDepth: config.actions.treeMaxDepth,
+      treeMaxNodes: config.actions.treeMaxNodes,
+      treeTimeoutMs: config.actions.treeTimeoutMs,
+      treePollMs: config.actions.treePollMs,
+    },
+  }),
+]);
+
 const sender = new FeishuExecutor({
-  client,
+  actions,
+  snapshots,
   reader,
   monitor,
   routes: new ChatRouteTable(),
   ledger: new SentLedger(),
   config: {
+    app: config.feishu.bundleId,
     allowedChats: [chat],
     dedupeWindowMs: 1,
-    focusAttempts: 3,
-    focusSettleMs: 600,
-    typeSettleMs: 400,
     echoTimeoutMs: 6_000,
     echoIntervalMs: 400,
     maxTextLength: 2_000,

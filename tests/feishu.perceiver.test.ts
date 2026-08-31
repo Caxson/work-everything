@@ -47,7 +47,6 @@ function healthyMonitor(pid = 4242): FeishuHealthMonitor {
     windows: async () => [{ nodeId: 1, role: 'AXWindow', title: '飞书' }],
     webAreas: async () => [{ nodeId: 2, role: 'AXWebArea', title: 'messenger-chat' }],
     screenLocked: async () => false,
-    requestWindow: async () => undefined,
   });
 }
 
@@ -249,8 +248,7 @@ describe('the perceiver’s health gate', () => {
       windows: async () => [],
       webAreas: async () => [],
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
-      config: { wedgedAfter },
+        config: { wedgedAfter },
     });
 
   it('does not read Feishu at all while it has no window', async () => {
@@ -274,8 +272,7 @@ describe('the perceiver’s health gate', () => {
       windows: async () => [],
       webAreas: async () => [],
       screenLocked: async () => true,
-      requestWindow: async () => undefined,
-    });
+      });
     const { perceiver, warnings, fatal } = withMonitor(locked);
     expect(await collect(perceiver, 200)).toEqual([]);
     expect(warnings.filter((line) => line.includes('screen is locked'))).toHaveLength(1);

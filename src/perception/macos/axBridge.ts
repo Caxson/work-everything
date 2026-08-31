@@ -38,6 +38,47 @@ export interface AxBridgeConfig {
 
 export const DEFAULT_AX_TIMEOUT_MS = 10_000;
 
+export interface AxClickRequest {
+  readonly nodeId?: number | undefined;
+  readonly x?: number | undefined;
+  readonly y?: number | undefined;
+  readonly button?: 'left' | 'right' | 'middle' | undefined;
+  readonly clickCount?: number | undefined;
+}
+
+export interface AxFocusAndTypeRequest {
+  readonly pid: number;
+  /** The element to focus. Required: the helper focuses by node, not by app. */
+  readonly nodeId: number;
+  readonly text: string;
+}
+
+/** What `awaitTree` reports. It answers about readiness, not with the tree. */
+const AxTreeReadinessSchema = z.object({
+  ready: z.boolean(),
+  nodes: z.number().int().nonnegative(),
+  webAreas: z.number().int().nonnegative(),
+  truncated: z.boolean().optional(),
+  polls: z.number().int().nonnegative(),
+  elapsedMs: z.number().int().nonnegative().optional(),
+});
+export type AxTreeReadiness = z.infer<typeof AxTreeReadinessSchema>;
+
+export interface AxAwaitTreeRequest {
+  readonly pid: number;
+  readonly timeoutMs: number;
+  readonly pollMs: number;
+  readonly maxDepth: number;
+  readonly maxNodes: number;
+}
+
+const AxFindBudgetSchema = z.object({
+  nodes: z.array(AxNodeSchema),
+  visited: z.number().int().nonnegative(),
+  truncated: z.boolean().optional(),
+});
+export type AxFindBudget = z.infer<typeof AxFindBudgetSchema>;
+
 interface Pending {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
@@ -171,6 +212,16 @@ export class AxBridgeClient {
     return z.array(AxNodeSchema).parse(await this.request('find', { pid, selector }));
   }
 
+  /**
+   * `find`, with the traversal budget the helper spent. `visited` is how many
+   * elements it walked, which is the cheapest signal available for "is this
+   * app's tree finished being built" — see `axAwait.ts`.
+   */
+  async findWithBudget(pid: number, selector: AxSelector, limits: { readonly maxDepth: number; readonly maxNodes: number }): Promise<AxFindBudget> {
+    const result = await this.request('find', { pid, selector, maxDepth: limits.maxDepth, maxNodes: limits.maxNodes, meta: true });
+    return AxFindBudgetSchema.parse(result);
+  }
+
   async attr(nodeId: number, name: string): Promise<unknown> {
     return await this.request('attr', { nodeId, name });
   }
@@ -179,8 +230,13 @@ export class AxBridgeClient {
     await this.request('setValue', { nodeId, value });
   }
 
-  async press(nodeId: number): Promise<void> {
-    await this.request('press', { nodeId });
+  /**
+   * Perform an accessibility action. Defaults to `AXPress`; a named action
+   * must be one the element actually exposes, so callers pass through what
+   * they read rather than what they expect.
+   */
+  async press(nodeId: number, action?: string): Promise<void> {
+    await this.request('press', { nodeId, ...(action === undefined ? {} : { action }) });
   }
 
   async focus(nodeId: number): Promise<void> {
@@ -188,12 +244,44 @@ export class AxBridgeClient {
   }
 
   /**
-   * A real mouse click at the node's centre. Chromium's contenteditable does
-   * not take focus from `AXFocused`; only a click routed through the window
-   * server puts the caret inside it.
+   * A real mouse click, at a node's centre or at a screen point. Chromium's
+   * contenteditable does not take focus from `AXFocused`; only a click routed
+   * through the window server puts the caret inside it.
    */
-  async click(nodeId: number): Promise<void> {
-    await this.request('click', { nodeId });
+  async click(request: AxClickRequest): Promise<void> {
+    const { nodeId, x, y, button, clickCount } = request;
+    if (nodeId === undefined && (x === undefined || y === undefined)) {
+      throw new AxBridgeError('click needs a nodeId, or both x and y', 'bad_request');
+    }
+    await this.request('click', {
+      ...(nodeId === undefined ? { x, y } : { nodeId }),
+      ...(button === undefined ? {} : { button }),
+      ...(clickCount === undefined ? {} : { clickCount }),
+    });
+  }
+
+  /**
+   * Focus an element and type into it, in one bridge-side operation.
+   *
+   * Atomic on purpose. The guarantee this side depends on is that no key is
+   * posted unless focus was confirmed to have landed: keys delivered to a
+   * Chromium window with focus elsewhere are read as global shortcuts, and
+   * the spike closed Feishu's window by typing the letter `w`. Splitting the
+   * two would put a race exactly where that failure lives.
+   */
+  async focusAndType(request: AxFocusAndTypeRequest): Promise<{ readonly focused?: unknown } | undefined> {
+    const result = await this.request('focusAndType', { pid: request.pid, nodeId: request.nodeId, text: request.text });
+    const parsed = z.object({ focused: z.unknown() }).passthrough().safeParse(result);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  /**
+   * Wait for an app's accessibility tree to become real, and report what was
+   * seen. It does not return the tree: readiness and reading are separate so
+   * the expensive traversal happens once, when there is something to traverse.
+   */
+  async awaitTree(request: AxAwaitTreeRequest): Promise<AxTreeReadiness> {
+    return AxTreeReadinessSchema.parse(await this.request('awaitTree', { ...request }));
   }
 
   async keystroke(pid: number, key: string, modifiers: readonly string[] = []): Promise<void> {

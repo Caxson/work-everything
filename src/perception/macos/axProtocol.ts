@@ -25,6 +25,13 @@ export const AX_OPS = [
   'focus',
   'click',
   'keystroke',
+  /**
+   * Focus an element and deliver text to the process as key events. The only
+   * path that reaches a `contenteditable`: see `src/actions/keyboard.ts`.
+   */
+  'focusAndType',
+  /** Poll until an app's tree is worth reading. See `axAwait.ts`. */
+  'awaitTree',
   'observe',
   'unobserve',
 ] as const;

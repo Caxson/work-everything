@@ -18,6 +18,13 @@ import { ShellExecutor } from '../execution/shell.js';
 import { toolRunner } from '../execution/base.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../execution/feishu/sender.js';
 import { AxBridgeClient } from '../perception/macos/axBridge.js';
+import { ActionRegistry } from '../actions/registry.js';
+import { SnapshotStore } from '../actions/snapshot.js';
+import { AutoWait } from '../actions/wait.js';
+import { bridgeKeyboardRoute } from '../actions/keyboard.js';
+import { systemClipboard } from '../actions/clipboard.js';
+import { MacAxDriver } from '../actions/drivers/macAx.js';
+import { BrowserCdpDriver } from '../actions/drivers/browserCdp.js';
 import { FeishuReader, feishuHealthMonitor } from '../perception/feishu/reader.js';
 import { FeishuPerceiver } from '../perception/feishu/perceiver.js';
 import { ChatRouteTable } from '../perception/feishu/chatRoutes.js';
@@ -60,8 +67,29 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
     bundleId: config.feishu.bundleId,
     appPath: config.feishu.appPath,
     selfName: config.feishu.selfName,
-    windowTimeoutMs: config.feishu.windowTimeoutMs,
   });
+
+  // One action vocabulary over two drivers. The browser driver is offered
+  // first because the accessibility driver claims every app: whatever wants
+  // more specific handling has to be asked before the general one.
+  const snapshots = new SnapshotStore();
+  const wait = new AutoWait({ settleMs: config.actions.settleMs, maxWaitMs: config.actions.maxWaitMs, pollMs: config.actions.pollMs });
+  const actions = new ActionRegistry([
+    new BrowserCdpDriver({ snapshots, wait, targets: config.actions.browsers }),
+    new MacAxDriver({
+      client,
+      keyboard: bridgeKeyboardRoute(client),
+      snapshots,
+      wait,
+      clipboard: systemClipboard,
+      config: {
+        treeMaxDepth: config.actions.treeMaxDepth,
+        treeMaxNodes: config.actions.treeMaxNodes,
+        treeTimeoutMs: config.actions.treeTimeoutMs,
+        treePollMs: config.actions.treePollMs,
+      },
+    }),
+  ]);
 
   const monitor = feishuHealthMonitor(client, reader);
   let fatal: string | undefined;
@@ -85,17 +113,16 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   });
 
   const feishu = new FeishuExecutor({
-    client,
+    actions,
+    snapshots,
     reader,
     monitor,
     routes,
     ledger,
     config: {
+      app: config.feishu.bundleId,
       allowedChats: config.feishu.allowedChats,
       dedupeWindowMs: config.feishu.dedupeWindowMs,
-      focusAttempts: 3,
-      focusSettleMs: 600,
-      typeSettleMs: 300,
       echoTimeoutMs: 5_000,
       echoIntervalMs: 400,
       maxTextLength: config.feishu.maxTextLength,

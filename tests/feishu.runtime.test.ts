@@ -192,9 +192,7 @@ describe('preflight', () => {
       bundleId: 'com.bytedance.macos.feishu',
       appPath: '/Applications/Lark.app',
       selfName: CHAT,
-      windowTimeoutMs: 50,
-      reopen: async () => undefined,
-    });
+        });
     return feishuHealthMonitor(client, reader, { screenLocked: async () => false, config: { wedgedAfter } });
   }
 

@@ -13,10 +13,15 @@
  * The distinction that matters is the last one. A tray'd app and a locked
  * screen both report zero `AXWindows`, and so does an app whose accessibility
  * layer has died — the three are indistinguishable from a single reading. So
- * this file does not diagnose from a single reading: it asks the app to show
- * a window, counts how many times in a row that has failed to change
- * anything, and only then calls it wedged. Guessing "wedged" too eagerly is
- * how you end up restarting somebody's chat client for no reason.
+ * this file does not diagnose from a single reading: it counts how many
+ * consecutive readings have failed and only then calls it wedged. Guessing
+ * "wedged" too eagerly is how you end up restarting somebody's chat client
+ * for no reason.
+ *
+ * What this file deliberately does *not* do is ask the app to show itself.
+ * Everything here runs while somebody else is using the Mac, and `open -a` on
+ * a background daemon's schedule takes the screen away from them. A missing
+ * window is reported and waited out, never summoned.
  *
  * `wedged` is terminal on purpose. Retrying against a wedged accessibility
  * layer never recovers it; only a human restarting the app does.
@@ -81,14 +86,14 @@ export function classifyHealth(observation: HealthObservation, config: FeishuHea
       return { state: 'no_window', pid, detail: 'the screen is locked, so Feishu exposes no window; unlock it and this resolves itself' };
     }
     if (!exhausted) {
-      return { state: 'no_window', pid, detail: 'Feishu shows no window (closed to the tray); asked it to reopen' };
+      return { state: 'no_window', pid, detail: 'Feishu shows no window (closed to the tray, or its window never reached the screen); waiting for one' };
     }
     return {
       state: 'wedged',
       pid,
       detail:
         `Feishu (pid ${pid}) is running and the screen is unlocked, but it has exposed no AXWindow across ` +
-        `${observation.failures + 1} readings and does not respond to being reopened. Its accessibility layer is wedged — restart Feishu.`,
+        `${observation.failures + 1} readings. Its accessibility layer is wedged — restart Feishu.`,
     };
   }
 
@@ -123,8 +128,6 @@ export interface FeishuHealthDeps {
   readonly windows: (pid: number) => Promise<readonly AxNode[]>;
   readonly webAreas: (pid: number) => Promise<readonly AxNode[]>;
   readonly screenLocked: () => Promise<boolean>;
-  /** Ask the app to show its window. One attempt, not a loop. */
-  readonly requestWindow: () => Promise<void>;
   readonly config?: FeishuHealthConfig;
 }
 
@@ -176,11 +179,6 @@ export class FeishuHealthMonitor {
     }
 
     this.failures += 1;
-    // Worth one nudge, but never while the screen is locked (it cannot work)
-    // and never once the verdict is terminal.
-    if (health.state === 'no_window' && !screenLocked && realWindows(windows).length === 0) {
-      await this.deps.requestWindow().catch(() => undefined);
-    }
     return health;
   }
 

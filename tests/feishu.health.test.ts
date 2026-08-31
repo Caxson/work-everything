@@ -88,29 +88,42 @@ describe('the health monitor', () => {
       windows: async () => [window],
       webAreas: async () => [webArea],
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
     });
     expect((await made.check()).pid).toBe(101);
     expect((await made.check()).pid).toBe(102);
   });
 
-  it('asks the app to show a window when there is none, but not while the screen is locked', async () => {
-    const reopens: number[] = [];
+  it('reports a missing window and waits it out, without ever asking for the screen', async () => {
+    // Nothing in the diagnosis path launches, raises or activates anything:
+    // this runs while somebody else is using the Mac.
+    const calls: string[] = [];
     const build = (screenLocked: boolean): FeishuHealthMonitor =>
       new FeishuHealthMonitor({
-        pid: async () => PID,
-        windows: async () => [],
-        webAreas: async () => [],
-        screenLocked: async () => screenLocked,
-        requestWindow: async () => {
-          reopens.push(1);
+        pid: async () => {
+          calls.push('pid');
+          return PID;
+        },
+        windows: async () => {
+          calls.push('windows');
+          return [];
+        },
+        webAreas: async () => {
+          calls.push('webAreas');
+          return [];
+        },
+        screenLocked: async () => {
+          calls.push('screenLocked');
+          return screenLocked;
         },
       });
 
-    await build(false).check();
-    expect(reopens).toHaveLength(1);
-    await build(true).check();
-    expect(reopens).toHaveLength(1);
+    const unlocked = await build(false).check();
+    expect(unlocked.state).toBe('no_window');
+    expect(unlocked.detail).toContain('waiting for one');
+    const locked = await build(true).check();
+    expect(locked.state).toBe('no_window');
+    expect(locked.detail).toContain('screen is locked');
+    expect(new Set(calls)).toEqual(new Set(['pid', 'windows', 'webAreas', 'screenLocked']));
   });
 
   it('escalates to wedged only after repeated failures, then stays there', async () => {
@@ -119,7 +132,6 @@ describe('the health monitor', () => {
       windows: async () => [],
       webAreas: async () => [],
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
       config: { wedgedAfter: 2 },
     });
     expect((await made.check()).state).toBe('no_window');
@@ -136,7 +148,6 @@ describe('the health monitor', () => {
       windows: async () => (healthy ? [window] : []),
       webAreas: async () => (healthy ? [webArea] : []),
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
       config: { wedgedAfter: 2 },
     });
     await made.check();
@@ -154,7 +165,6 @@ describe('the health monitor', () => {
       windows: async () => [],
       webAreas: async () => [],
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
     });
     const health = await made.check();
     expect(health.state).toBe('no_window');
@@ -167,7 +177,6 @@ describe('the health monitor', () => {
       windows: async () => [],
       webAreas: async () => [],
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
       config: { wedgedAfter: 1 },
     });
     await made.check();
@@ -180,7 +189,6 @@ describe('the health monitor', () => {
       windows: async () => [],
       webAreas: async () => [],
       screenLocked: async () => true,
-      requestWindow: async () => undefined,
     });
     await expect(made.require()).resolves.toMatchObject({ state: 'no_window' });
   });
@@ -193,7 +201,6 @@ describe('the health monitor', () => {
         throw new Error('AX_ERROR(-25204)');
       },
       screenLocked: async () => false,
-      requestWindow: async () => undefined,
     });
     expect((await made.check()).state).toBe('no_window');
   });

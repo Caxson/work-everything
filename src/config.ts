@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { FAILURE_POLICIES, ScenarioSchema } from './core/scenario.js';
 import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID } from './perception/feishu/selectors.js';
+import { DEFAULT_BROWSER_TARGETS } from './actions/drivers/browserCdp.js';
 
 export const DEFAULT_STATE_DIR = join(homedir(), '.work-everything');
 
@@ -100,7 +101,27 @@ export const ConfigSchema = z
         /** Identical reply text to one chat is dropped inside this window. */
         dedupeWindowMs: z.number().int().positive().default(30_000),
         maxTextLength: z.number().int().positive().default(2_000),
-        windowTimeoutMs: z.number().int().positive().default(8_000),
+      })
+      .strict()
+      .default({}),
+    /**
+     * The action layer's timings. The defaults are the ones Codex's runtime
+     * uses — about a second of quiet after an action, up to five more while
+     * the app still looks busy — and the tree limits are what Feishu needs:
+     * its message bodies sit at depth 30–45, and a shallower walk returns a
+     * shell of groups that looks exactly like a broken tree.
+     */
+    actions: z
+      .object({
+        settleMs: z.number().int().nonnegative().default(1_000),
+        maxWaitMs: z.number().int().nonnegative().default(5_000),
+        pollMs: z.number().int().positive().default(250),
+        treeMaxDepth: z.number().int().positive().default(45),
+        treeMaxNodes: z.number().int().positive().default(12_000),
+        treeTimeoutMs: z.number().int().positive().default(8_000),
+        treePollMs: z.number().int().positive().default(250),
+        /** Apps routed to the CDP driver instead of accessibility. */
+        browsers: z.array(z.string()).default([...DEFAULT_BROWSER_TARGETS]),
       })
       .strict()
       .default({}),

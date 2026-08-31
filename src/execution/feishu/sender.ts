@@ -2,45 +2,57 @@
  * Sending a message in Feishu — the one place in this project that writes to
  * something a human will read.
  *
- * Every guard below exists because the alternative was demonstrated, not
- * imagined (`spikes/README.md`, "踩过的坑"):
+ * The send now goes through the action layer (`src/actions`), which is what
+ * makes it work with Feishu in the background: every step is addressed to the
+ * application, nothing asks for the screen, and the element being written to
+ * is bound to the reading it was found in. What did not change is the set of
+ * guards, because each one exists for something that was demonstrated rather
+ * than imagined (`spikes/README.md`, "踩过的坑"):
  *
- * - **Nothing is typed until focus is confirmed.** With focus outside the
+ * - **Nothing is typed until focus has landed.** With focus outside the
  *   composer, Chromium treats each character as a global shortcut: the spike
  *   navigated away from the chat and closed Feishu's window by typing a `w`.
- *   So the composer is clicked (`AXFocused` does not work on a contenteditable)
- *   and the app is asked who holds focus, and a failed check sends zero keys.
- * - **Nothing is sent until the text is read back out of the composer.** Enter
- *   is the send key and there is no undo.
+ *   The focus and the typing are now one bridge-side operation that posts no
+ *   key unless focus was confirmed — see `src/actions/keyboard.ts`.
+ * - **Nothing is typed with the accessibility write.** `setValue` on a
+ *   contenteditable reports success and produces no input event. The action
+ *   layer routes web content to the keyboard path and fails loudly when that
+ *   path is missing, rather than falling back to the write that lies.
+ * - **Nothing is sent until the text is read back out of the composer.**
+ *   Enter is the send key and there is no undo.
  * - **Nothing is typed into an app whose accessibility layer is wedged.** The
- *   health check runs before the first click, so a broken Feishu produces a
- *   readable error instead of keystrokes fired into nowhere.
+ *   health check runs before anything else.
  * - **Nothing is sent to a conversation that was not asked for.** The target
- *   chat is resolved from the event's own trace id, checked against the
- *   allowlist, and compared with the title actually on screen.
- * - **The same text is not sent twice inside the dedupe window.** A retry, a
- *   double-routed event or a re-planned chain must not double-message a person.
+ *   is resolved from the event's own trace id, checked against the allowlist,
+ *   and compared with the title on screen — in the same reading the write is
+ *   bound to, so nothing can change between the check and the write.
+ * - **The same text is not sent twice inside the dedupe window.**
  */
 import { z } from 'zod';
 import type { Executor, ToolResult } from '../base.js';
 import { describeError, fail, ok } from '../base.js';
+import type { ActionDriver } from '../../actions/driver.js';
+import type { SnapshotElement, SnapshotStore } from '../../actions/snapshot.js';
 import type { ChatRouteTable } from '../../perception/feishu/chatRoutes.js';
 import type { FeishuReader } from '../../perception/feishu/reader.js';
 import type { FeishuHealthMonitor } from '../../perception/feishu/health.js';
 import type { SentLedger } from '../../perception/feishu/sentLedger.js';
-import type { AxBridgeClient } from '../../perception/macos/axBridge.js';
-import { COMMAND_MODIFIER, DELETE_KEY, DOM_CLASS, SELECT_ALL_KEY, SEND_KEY } from '../../perception/feishu/selectors.js';
+import type { OpenChat } from '../../perception/feishu/elements.js';
+import { locateOpenChat } from '../../perception/feishu/elements.js';
+import { FEISHU_BUNDLE_ID, SEND_KEY } from '../../perception/feishu/selectors.js';
 
 export const FEISHU_REPLY_TOOL = 'feishu.reply';
 
+/** A line break inside the composer. A bare Enter would send the message. */
+export const NEWLINE_KEY = `shift+${SEND_KEY}`;
+
 export interface FeishuSenderConfig {
+  /** How the action layer is to name the app: its bundle identifier. */
+  readonly app: string;
   /** Conversations this executor may write to. Empty means it may write to none. */
   readonly allowedChats: readonly string[];
   /** Identical text to the same chat is dropped inside this window. */
   readonly dedupeWindowMs: number;
-  readonly focusAttempts: number;
-  readonly focusSettleMs: number;
-  readonly typeSettleMs: number;
   readonly echoTimeoutMs: number;
   readonly echoIntervalMs: number;
   /** Longer text is truncated rather than refused; a reply still gets through. */
@@ -48,18 +60,20 @@ export interface FeishuSenderConfig {
 }
 
 export const DEFAULT_FEISHU_SENDER_CONFIG: FeishuSenderConfig = {
+  app: FEISHU_BUNDLE_ID,
   allowedChats: [],
   dedupeWindowMs: 30_000,
-  focusAttempts: 3,
-  focusSettleMs: 600,
-  typeSettleMs: 300,
   echoTimeoutMs: 5_000,
   echoIntervalMs: 400,
   maxTextLength: 2_000,
 };
 
 export interface FeishuSenderDeps {
-  readonly client: AxBridgeClient;
+  /** The action layer. Every keystroke and every read of the UI goes here. */
+  readonly actions: ActionDriver;
+  /** Where the reading behind a `snapshot_id` lives, for locating elements. */
+  readonly snapshots: SnapshotStore;
+  /** Still used for the echo: it parses messages, which the raw reading does not. */
   readonly reader: FeishuReader;
   /** Consulted before any input is synthesized. */
   readonly monitor: FeishuHealthMonitor;
@@ -86,6 +100,14 @@ export interface ReplyOutcome {
   readonly chat: string;
   readonly echoedMessageId: string | undefined;
   readonly deduped: boolean;
+}
+
+/** One reading, and the token that binds an index to it. */
+interface Reading {
+  readonly snapshotId: string;
+  readonly app: string;
+  readonly elements: readonly SnapshotElement[];
+  readonly chat: OpenChat | undefined;
 }
 
 export class FeishuExecutor implements Executor {
@@ -141,25 +163,14 @@ export class FeishuExecutor implements Executor {
     const health = await this.deps.monitor.require();
     if (health.state !== 'ok') throw new Error(health.detail);
 
-    const before = await this.deps.reader.snapshot();
-    if (!before.hasOpenChat) throw new Error('no Feishu conversation is open');
-    if (before.chatTitle !== target) {
-      throw new Error(`the open conversation is '${before.chatTitle}', not '${target}'; refusing to send into the wrong chat`);
-    }
-    const composer = before.composerNodeId;
-    if (composer === undefined) throw new Error(`conversation '${target}' exposes no composer`);
+    const before = await this.read();
+    const composer = this.composerOf(before, target);
 
-    if (!(await this.focusComposer(composer))) {
-      throw new Error('could not put the caret in the composer; sent no keystrokes');
-    }
+    await this.write(before, composer, text);
 
-    await this.clearComposer(health.pid);
-    await this.typeText(health.pid, text);
-    await this.sleep(this.deps.config.typeSettleMs);
-
-    const staged = await this.deps.reader.snapshot();
-    if (!contains(staged.composerText, text)) {
-      await this.clearComposer(health.pid);
+    const staged = await this.read();
+    if (!contains(staged.chat?.composerText ?? '', text)) {
+      await this.clearComposer(staged);
       throw new Error('the composer does not contain the reply after typing it; nothing was sent');
     }
 
@@ -169,7 +180,7 @@ export class FeishuExecutor implements Executor {
     // Recorded before the key that sends it: the perceiver may read the message
     // back before `awaitEcho` returns, and it must already know whose it is.
     this.deps.ledger.record(text);
-    await this.deps.client.keystroke(health.pid, SEND_KEY);
+    await this.deps.actions.press_key({ app: this.deps.config.app, key: SEND_KEY });
 
     const echoedMessageId = await this.awaitEcho(text);
     this.deps.ledger.record(text, echoedMessageId);
@@ -177,36 +188,54 @@ export class FeishuExecutor implements Executor {
   }
 
   /**
-   * Click into the composer until the app agrees that is where focus is.
-   * Compared by DOM class because Chromium returns a fresh `AXUIElement`
-   * handle for the same element on every call.
+   * Put the reply in the composer.
+   *
+   * The first line replaces whatever was there, through the composer's own
+   * element; the rest are separated by Shift+Enter, because a bare Enter is
+   * the send key and a multi-line reply typed naively would send its first
+   * line and scatter the remainder across follow-up messages.
    */
-  private async focusComposer(composerNodeId: number): Promise<boolean> {
-    for (let attempt = 0; attempt < this.deps.config.focusAttempts; attempt += 1) {
-      await this.deps.client.click(composerNodeId);
-      await this.sleep(this.deps.config.focusSettleMs);
-      const classes = await this.deps.reader.focusedDomClasses();
-      if (classes.includes(DOM_CLASS.composer)) return true;
+  private async write(reading: Reading, composerIndex: number, text: string): Promise<void> {
+    const [first = '', ...rest] = text.split(/\r\n|\r|\n/);
+    await this.deps.actions.set_value({ app: reading.app, element_index: composerIndex, snapshot_id: reading.snapshotId, value: first });
+    for (const line of rest) {
+      await this.deps.actions.press_key({ app: reading.app, key: NEWLINE_KEY });
+      if (line !== '') await this.deps.actions.type_text({ app: reading.app, text: line });
     }
-    return false;
-  }
-
-  private async clearComposer(pid: number): Promise<void> {
-    await this.deps.client.keystroke(pid, SELECT_ALL_KEY, COMMAND_MODIFIER);
-    await this.deps.client.keystroke(pid, DELETE_KEY);
   }
 
   /**
-   * Type the reply. Line breaks are Shift+Enter: a bare Enter is the send key,
-   * so a multi-line reply typed naively would send its first line and then
-   * scatter the rest across follow-up messages.
+   * The composer's index in this reading, having established that the
+   * conversation on screen is the one being answered. Both checks are made
+   * against the same reading the write will be bound to.
    */
-  private async typeText(pid: number, text: string): Promise<void> {
-    const lines = text.split('\n');
-    for (const [index, line] of lines.entries()) {
-      if (index > 0) await this.deps.client.keystroke(pid, SEND_KEY, ['shift']);
-      if (line !== '') await this.deps.client.keystroke(pid, line);
+  private composerOf(reading: Reading, target: string): number {
+    const chat = reading.chat;
+    if (chat === undefined) throw new Error('no Feishu conversation is open');
+    if (chat.chatTitle !== target) {
+      throw new Error(`the open conversation is '${chat.chatTitle}', not '${target}'; refusing to send into the wrong chat`);
     }
+    if (chat.composerIndex === undefined) throw new Error(`conversation '${target}' exposes no composer`);
+    return chat.composerIndex;
+  }
+
+  /** Best-effort: a failed send must not leave a half-typed draft behind. */
+  private async clearComposer(reading: Reading): Promise<void> {
+    const index = reading.chat?.composerIndex;
+    if (index === undefined) return;
+    await this.deps.actions
+      .set_value({ app: reading.app, element_index: index, snapshot_id: reading.snapshotId, value: '' })
+      .catch(() => undefined);
+  }
+
+  /** One full reading of the app, and the elements behind it. */
+  private async read(): Promise<Reading> {
+    const state = await this.deps.actions.get_app_state({ app: this.deps.config.app, disableDiff: true });
+    const snapshot = this.deps.snapshots.current(state.app);
+    if (snapshot === undefined || snapshot.snapshotId !== state.snapshotId) {
+      throw new Error(`the reading of '${state.app}' went stale between taking it and using it; nothing was sent`);
+    }
+    return { snapshotId: state.snapshotId, app: state.app, elements: snapshot.elements, chat: locateOpenChat(snapshot.elements) };
   }
 
   /** Read the sent message back out of the conversation, for its real id. */
@@ -231,7 +260,7 @@ export class FeishuExecutor implements Executor {
   }
 
   private dedupeKey(chat: string, text: string): string {
-    return `${chat} ${text}`;
+    return `${chat} ${text}`;
   }
 
   private rememberSent(key: string): void {
