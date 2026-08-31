@@ -6,8 +6,14 @@ import Foundation
 /// generic: no per-application knowledge lives here.
 struct AXElement {
     let ref: AXUIElement
+    /// Set when this element came out of a census and was equal to the element it was read
+    /// from — an accessibility placeholder, not a real child or window.
+    let isSelfEqual: Bool
 
-    init(_ ref: AXUIElement) { self.ref = ref }
+    init(_ ref: AXUIElement, isSelfEqual: Bool = false) {
+        self.ref = ref
+        self.isSelfEqual = isSelfEqual
+    }
 
     /// Messaging timeout guards against a hung target app blocking the bridge forever.
     /// Set on an application element it applies to every element of that app.
@@ -16,6 +22,8 @@ struct AXElement {
         AXUIElementSetMessagingTimeout(element, timeout)
         return AXElement(element)
     }
+
+    func windowCensus() -> ElementCensus { elementCensus(kAXWindowsAttribute) }
 
     static func systemWide() -> AXElement { AXElement(AXUIElementCreateSystemWide()) }
 
@@ -66,29 +74,82 @@ struct AXElement {
         return (value as! CFString) as String
     }
 
+    func bool(_ attribute: String) -> Bool {
+        guard let value = copy(attribute), CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
+        return CFBooleanGetValue((value as! CFBoolean))
+    }
+
     func children() -> [AXElement] {
         elementList(copy(kAXChildrenAttribute))
     }
 
-    /// Extracts AXUIElements from an attribute value, dropping anything that is not an
-    /// element and anything equal to the receiver.
+    /// What an element-valued attribute actually contained, before anything was dropped.
     ///
-    /// The self-equal filter is load-bearing. When an application has no AX-materialized
-    /// window, the accessibility server does not return an empty list — it returns an
-    /// *application-typed placeholder* (`<AXUIElement Application …> {pid=N}`, CFEqual to
-    /// the app element) in the window's slot. `AXWindows`, `AXChildren` and `AXMainWindow`
-    /// all do this. Passing one through would report the application as its own child,
-    /// collapse it onto the root's nodeId, and hand callers a frame-less "window".
-    func elementList(_ value: CFTypeRef?) -> [AXElement] {
-        guard let value = value, CFGetTypeID(value) == CFArrayGetTypeID() else { return [] }
-        let array = value as! CFArray as [AnyObject]
-        return array.compactMap { item in
-            let candidate = item as CFTypeRef
-            guard CFGetTypeID(candidate) == AXUIElementGetTypeID() else { return nil }
-            let element = candidate as! AXUIElement
-            guard !CFEqual(element, ref) else { return nil }
-            return AXElement(element)
+    /// The self-equal entries are the whole point of keeping this. When an application has
+    /// no AX-materialized window the accessibility server does not return an empty list —
+    /// it returns an *application-typed placeholder* (`<AXUIElement Application …>
+    /// {pid=N}`, CFEqual to the app element) in the window's slot. `AXWindows`,
+    /// `AXChildren` and `AXMainWindow` all do this, and a locked screen replaces **every**
+    /// entry that way while keeping the count correct.
+    ///
+    /// That means the filter and the diagnosis want opposite things from the same data:
+    /// traversal must drop the placeholders or it walks the application as its own child
+    /// forever, and the diagnosis must see them or a locked screen is indistinguishable
+    /// from an application with no windows. So the census is taken first and filtering is
+    /// something a caller does to it afterwards — never the other way round.
+    struct ElementCensus {
+        /// Every entry that was an AXUIElement, placeholders included.
+        let all: [AXElement]
+        /// Entries equal to the receiver — the substitution signature.
+        let selfEqual: Int
+        /// Entries that were not elements at all.
+        let nonElement: Int
+
+        /// Safe to traverse: the census minus the placeholders.
+        var real: [AXElement] { all.filter { !$0.isSelfEqual } }
+        var rawCount: Int { all.count + nonElement }
+        /// Every single entry was a placeholder, and there was at least one.
+        var fullySubstituted: Bool { selfEqual > 0 && selfEqual == rawCount }
+
+        var json: JSONValue {
+            .object(["entries": .int(rawCount), "selfEqual": .int(selfEqual),
+                     "nonElement": .int(nonElement), "real": .int(real.count)])
         }
+    }
+
+    /// Reads an element-valued attribute and counts what came back, dropping nothing.
+    func elementCensus(_ attribute: String) -> ElementCensus {
+        census(copy(attribute))
+    }
+
+    func census(_ value: CFTypeRef?) -> ElementCensus {
+        guard let value = value, CFGetTypeID(value) == CFArrayGetTypeID(),
+              let array = value as? [AnyObject] else {
+            return ElementCensus(all: [], selfEqual: 0, nonElement: 0)
+        }
+        var all: [AXElement] = []
+        var selfEqual = 0
+        var nonElement = 0
+        for item in array {
+            let candidate = item as CFTypeRef
+            guard CFGetTypeID(candidate) == AXUIElementGetTypeID() else {
+                nonElement += 1
+                continue
+            }
+            let element = candidate as! AXUIElement
+            let matchesSelf = CFEqual(element, ref)
+            if matchesSelf { selfEqual += 1 }
+            all.append(AXElement(element, isSelfEqual: matchesSelf))
+        }
+        return ElementCensus(all: all, selfEqual: selfEqual, nonElement: nonElement)
+    }
+
+    /// Traversal-safe view of an element-valued attribute: placeholders removed.
+    ///
+    /// Callers that need to tell "no windows" apart from "every window was replaced by the
+    /// application" must use `elementCensus` and classify before reaching for this.
+    func elementList(_ value: CFTypeRef?) -> [AXElement] {
+        census(value).real
     }
 
     func setAttribute(_ attribute: String, _ value: CFTypeRef) -> AXError {
@@ -97,6 +158,24 @@ struct AXElement {
 
     func perform(_ action: String) -> AXError {
         AXUIElementPerformAction(ref, action as CFString)
+    }
+
+    /// What this element says it can do.
+    ///
+    /// Worth asking before performing anything: an element that does not advertise an
+    /// action answers `actionUnsupported` for it, and a real `AXScrollArea` advertises no
+    /// actions at all — measured on the Finder desktop and on Chrome's content area — so
+    /// scrolling one through an action was never going to work.
+    func actionNames() -> [String] {
+        var names: CFArray?
+        guard AXUIElementCopyActionNames(ref, &names) == .success else { return [] }
+        return (names as? [String]) ?? []
+    }
+
+    func isSettable(_ attribute: String) -> Bool {
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(ref, attribute as CFString, &settable) == .success else { return false }
+        return settable.boolValue
     }
 }
 

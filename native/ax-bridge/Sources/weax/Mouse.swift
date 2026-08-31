@@ -58,6 +58,7 @@ enum Mouse {
             "button": .string(button.lowercased()), "clickCount": .int(clickCount),
             "flags": .int(Int(flags.rawValue)),
             "tap": .string("cghidEventTap"),
+            "route": .string("foreground"),
             "events": .array([.string("mouseMoved"), .string(spec.downName), .string(spec.upName)])
         ])
         guard !dryRun else { return .object(["ok": .bool(true), "dryRun": .bool(true), "plan": plan]) }
@@ -69,7 +70,7 @@ enum Mouse {
         return .object(["ok": .bool(true), "plan": plan])
     }
 
-    private static func flagMask(_ modifiers: [String]) throws -> CGEventFlags {
+    static func flagMask(_ modifiers: [String]) throws -> CGEventFlags {
         var flags: CGEventFlags = []
         for raw in modifiers {
             switch try Keyboard.canonical(raw) {
@@ -81,6 +82,39 @@ enum Mouse {
             }
         }
         return flags
+    }
+
+    /// Foreground scroll. Like `click`, it moves the pointer first, because the HID tap
+    /// routes a scroll to whatever is under the cursor. Use the background route to scroll
+    /// a window without taking the pointer away from the person using the machine.
+    static func scroll(at point: CGPoint, deltaX: Int, deltaY: Int, unit: CGScrollEventUnit,
+                       flags: CGEventFlags, dryRun: Bool) throws -> JSONValue {
+        let plan: JSONValue = .object([
+            "x": .double(point.x), "y": .double(point.y),
+            "deltaX": .int(deltaX), "deltaY": .int(deltaY),
+            "unit": .string(unit == .pixel ? "pixel" : "line"),
+            "flags": .int(Int(flags.rawValue)),
+            "tap": .string("cghidEventTap"),
+            "route": .string("foreground"),
+            "events": .array([.string("mouseMoved"), .string("scrollWheel")])
+        ])
+        guard !dryRun else { return .object(["ok": .bool(true), "dryRun": .bool(true), "plan": plan]) }
+
+        guard let source = CGEventSource(stateID: .privateState) else {
+            throw BridgeError(code: "CG_ERROR", message: "could not create a CGEventSource")
+        }
+        guard let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
+                                 mouseCursorPosition: point, mouseButton: .left),
+              let wheel = CGEvent(scrollWheelEvent2Source: source, units: unit, wheelCount: 2,
+                                  wheel1: Int32(deltaY), wheel2: Int32(deltaX), wheel3: 0) else {
+            throw BridgeError(code: "CG_ERROR", message: "could not create scroll events")
+        }
+        move.flags = flags
+        move.post(tap: .cghidEventTap)
+        wheel.flags = flags
+        wheel.location = point
+        wheel.post(tap: .cghidEventTap)
+        return .object(["ok": .bool(true), "plan": plan])
     }
 
     private static func post(source: CGEventSource, point: CGPoint, spec: ButtonSpec,

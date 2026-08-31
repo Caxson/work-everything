@@ -27,6 +27,24 @@ struct KeyEventSpec {
 
 /// US-ANSI virtual keycodes and the modifier press/release choreography.
 enum Keyboard {
+    /// Builds the CGEvent one spec describes. Shared by the foreground and background
+    /// paths so a plan means the same thing on both; only the event source and how it is
+    /// posted differ.
+    static func makeEvent(_ spec: KeyEventSpec, source: CGEventSource?) throws -> CGEvent {
+        let isDown = spec.kind != .keyUp
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: spec.keyCode, keyDown: isDown) else {
+            throw BridgeError(code: "CG_ERROR", message: "could not create key event for \(spec.kind)")
+        }
+        if spec.kind == .flagsChanged { event.type = .flagsChanged }
+        // Always explicit, including the empty mask — never inherit.
+        event.flags = spec.flags
+        if let unicode = spec.unicode {
+            let utf16 = Array(unicode.utf16)
+            event.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+        }
+        return event
+    }
+
     static let named: [String: CGKeyCode] = [
         "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51,
         "escape": 53, "esc": 53, "forwarddelete": 117,

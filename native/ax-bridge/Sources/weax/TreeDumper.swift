@@ -92,16 +92,25 @@ struct TreeDumper {
     }
 
     /// Roots to walk: the whole app, or one window when `windowIndex` is given.
+    ///
+    /// Scoping to a window goes through the resolver so that an empty window list arrives
+    /// as the classified reason it is empty. Walking the application element instead would
+    /// quietly return its menu bar — three hundred nodes that look like a tree.
     static func roots(app: AXElement, windowIndex: Int?) throws -> [AXElement] {
         guard let windowIndex = windowIndex else { return [app] }
-        let windows = windowList(app: app)
+        guard let pid = app.pid else {
+            throw BridgeError(code: "NO_SUCH_PID", message: "this application element has no pid")
+        }
+        let windows = try WindowResolver.windows(pid: pid)
         guard windowIndex >= 0, windowIndex < windows.count else {
             throw BridgeError.badRequest("windowIndex \(windowIndex) out of range (app has \(windows.count) windows)")
         }
-        return [windows[windowIndex]]
+        return [windows[windowIndex].element]
     }
 
+    /// Traversal-safe window list with no diagnosis. Only for callers that have already
+    /// classified an empty result, or that genuinely do not care why it is empty.
     static func windowList(app: AXElement) -> [AXElement] {
-        app.elementList(app.copy(kAXWindowsAttribute))
+        app.windowCensus().real
     }
 }

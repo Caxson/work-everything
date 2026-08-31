@@ -9,7 +9,23 @@ enum Dispatcher {
     /// Ops that touch the Accessibility API and therefore need TCC approval.
     private static let trustRequired: Set<String> = [
         "enableAX", "tree", "find", "attr", "setValue", "press", "focus",
-        "keystroke", "click", "observe", "unobserve", "windows"
+        "keystroke", "click", "scroll", "observe", "unobserve", "windows",
+        "windowInfo", "awaitTree", "activate", "bgSession", "bgRelease", "focusAndType"
+    ]
+
+    /// Ops that cannot produce a correct answer while the screen is locked, because
+    /// accessibility substitutes the application element for every window and reports
+    /// success the whole way down.
+    ///
+    /// Dispatch that was *given* a window number is deliberately absent from this set. The
+    /// event channel survives a lock — a click posted to a pid with fields 51/58 still
+    /// lands — and that is the only capability a locked screen leaves standing. Refusing
+    /// it here would cost the one thing that still works and protect nobody. What is
+    /// gated is everything that has to *find* a window or an element first.
+    private static let lockSensitive: Set<String> = [
+        "windows", "windowInfo", "tree", "find", "awaitTree",
+        "activate", "bgSession", "focusAndType",
+        "attr", "setValue", "press", "focus"
     ]
 
     static func handle(_ request: Request) {
@@ -17,6 +33,7 @@ enum Dispatcher {
             if trustRequired.contains(request.op), !AXIsProcessTrusted() {
                 throw BridgeError.notTrusted()
             }
+            if lockSensitive.contains(request.op) { try ScreenLock.requireUnlocked() }
             let result = try run(request)
             Output.shared.success(id: request.id, result: result)
         } catch let error as BridgeError {
@@ -41,10 +58,18 @@ enum Dispatcher {
         case "press": return try Actions.press(nodeId: request.requireInt("nodeId"),
                                                action: request.string("action") ?? kAXPressAction)
         case "focus": return try Actions.focus(nodeId: request.requireInt("nodeId"))
-        case "keystroke": return try keystroke(request)
-        case "click": return try click(request)
+        case "keystroke": return try InputOps.keystroke(request)
+        case "click": return try InputOps.click(request)
+        case "scroll": return try InputOps.scroll(request)
         case "observe": return try observe(request)
         case "unobserve": return try ObserverRegistry.shared.unobserve(id: request.requireInt("subscription"))
+        case "windowInfo": return try BackgroundOps.windowInfo(request)
+        case "awaitTree": return try BackgroundOps.awaitTree(request)
+        case "activate": return try BackgroundOps.activate(request)
+        case "bgSession": return try BackgroundOps.bgSession(request)
+        case "bgRelease": return try BackgroundOps.bgRelease(request)
+        case "focusAndType": return try BackgroundOps.focusAndType(request)
+        case "env": return env()
         case "shutdown": return shutdown(request)
         default: throw BridgeError.unknownOp(request.op)
         }
@@ -79,18 +104,68 @@ enum Dispatcher {
         return .array(list)
     }
 
-    private static func windows(_ request: Request) throws -> JSONValue {
+    /// Resolves an application element and refuses the two states that answer plausibly
+    /// and wrongly: a locked screen, and a window list that has been substituted.
+    private static func app(_ request: Request) throws -> AXElement {
         let app = AXElement.application(pid: try Processes.requirePid(request.requireInt("pid")))
-        let list = TreeDumper.windowList(app: app).enumerated().map { index, window -> JSONValue in
-            var node = NodeBuilder.describe(window)
-            node["index"] = .int(index)
-            return .object(node)
+        try ScreenLock.requireAddressable(app: app)
+        return app
+    }
+
+    private static func env() -> JSONValue {
+        let now = Invariants.snapshot()
+        return .object([
+            "trusted": .bool(AXIsProcessTrusted()),
+            // The pointer's current position, so a caller can measure how much it drifts
+            // on its own and judge an op's `cursorDelta` against that rather than against
+            // zero. Somebody using the machine moves the mouse; we never do.
+            "cursor": .object(["x": .double(now.cursor.x), "y": .double(now.cursor.y)]),
+            "frontmost": .string(now.frontmostName),
+            "spi": SPI.report,
+            "screen": ScreenLock.report,
+            "sessions": .int(SessionRegistry.shared.count),
+            "nodes": .int(ElementRegistry.shared.count)
+        ])
+    }
+
+    /// Windows, with the reason attached when there are none.
+    ///
+    /// The bare-array form throws instead of answering `[]`, because an empty array is the
+    /// one answer that reads the same in all three failing states and sends a caller into
+    /// a retry loop against two of them it cannot fix. `meta: true` returns the envelope
+    /// with the classification in it instead of throwing, for a caller that would rather
+    /// branch than catch. Neither form can return an unexplained empty list.
+    private static func windows(_ request: Request) throws -> JSONValue {
+        let pid = try Processes.requirePid(request.requireInt("pid"))
+        guard request.bool("meta", default: false) else {
+            return .array(try WindowResolver.windows(pid: pid).map { node(for: $0) })
         }
-        return .array(list)
+        do {
+            let resolved = try WindowResolver.windows(pid: pid)
+            return .object([
+                "windows": .array(resolved.map { node(for: $0) }),
+                "diagnosis": .object(["code": .string("OK"), "addressable":
+                    .int(resolved.filter { $0.addressable }.count)])
+            ])
+        } catch let error as BridgeError {
+            var diagnosis: [String: JSONValue] = ["code": .string(error.code), "message": .string(error.message)]
+            if let details = error.details { diagnosis["details"] = details }
+            return .object(["windows": .array([]), "diagnosis": .object(diagnosis)])
+        }
+    }
+
+    /// The historical node shape, plus the addressing facts a background caller needs.
+    private static func node(for window: ResolvedWindow) -> JSONValue {
+        var node = NodeBuilder.describe(window.element)
+        node["index"] = .int(window.index)
+        node["windowNumber"] = .int(window.windowNumber)
+        node["resolvedBy"] = .string(window.resolvedBy)
+        node["addressable"] = .bool(window.addressable)
+        return .object(node)
     }
 
     private static func tree(_ request: Request) throws -> JSONValue {
-        let app = AXElement.application(pid: try Processes.requirePid(request.requireInt("pid")))
+        let app = try app(request)
         let roots = try TreeDumper.roots(app: app, windowIndex: request.params["windowIndex"]?.intValue)
         var dumper = TreeDumper(maxDepth: request.int("maxDepth", default: 12),
                                 maxNodes: request.int("maxNodes", default: 5_000))
@@ -108,7 +183,7 @@ enum Dispatcher {
     }
 
     private static func find(_ request: Request) throws -> JSONValue {
-        let app = AXElement.application(pid: try Processes.requirePid(request.requireInt("pid")))
+        let app = try app(request)
         let roots = try TreeDumper.roots(app: app, windowIndex: request.params["windowIndex"]?.intValue)
         let selector = try Selector.parse(request.require("selector"))
         let finder = Finder(selector: selector,
@@ -141,35 +216,6 @@ enum Dispatcher {
         return .array(list.map { .string($0) })
     }
 
-    private static func keystroke(_ request: Request) throws -> JSONValue {
-        let pid = try Processes.requirePid(request.requireInt("pid"))
-        return try Actions.keystroke(pid: pid,
-                                     key: try request.requireString("key"),
-                                     modifiers: modifierList(request),
-                                     dryRun: request.bool("dryRun", default: false))
-    }
-
-    /// Click target: an explicit screen point, or the centre of a node's frame.
-    private static func click(_ request: Request) throws -> JSONValue {
-        let point: CGPoint
-        if let nodeId = request.params["nodeId"]?.intValue {
-            point = try Mouse.center(of: AXElement(try ElementRegistry.shared.element(for: nodeId)))
-        } else if let x = request.params["x"]?.doubleValue, let y = request.params["y"]?.doubleValue {
-            point = CGPoint(x: x, y: y)
-        } else {
-            throw BridgeError.badRequest("click needs either 'nodeId' or both 'x' and 'y'")
-        }
-        return try Mouse.click(at: point,
-                               button: request.string("button") ?? "left",
-                               clickCount: request.int("clickCount", default: 1),
-                               modifiers: modifierList(request),
-                               dryRun: request.bool("dryRun", default: false))
-    }
-
-    private static func modifierList(_ request: Request) -> [String] {
-        (request.params["modifiers"]?.arrayValue ?? []).compactMap { $0.stringValue }
-    }
-
     private static func observe(_ request: Request) throws -> JSONValue {
         let pid = try Processes.requirePid(request.requireInt("pid"))
         let element: AXUIElement
@@ -186,6 +232,9 @@ enum Dispatcher {
 
     private static func shutdown(_ request: Request) -> JSONValue {
         Output.shared.success(id: request.id, result: .object(["ok": .bool(true)]))
+        // A suppression tap that outlives the process that installed it would leave
+        // somebody else's application filtered with nothing left to un-filter it.
+        SessionRegistry.shared.releaseAll()
         ObserverRegistry.shared.teardownAll()
         exit(0)
     }

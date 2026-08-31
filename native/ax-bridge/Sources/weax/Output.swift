@@ -45,11 +45,9 @@ final class Output {
     }
 
     func failure(id: Int, error: BridgeError) {
-        emit(.object([
-            "id": .int(id),
-            "ok": .bool(false),
-            "error": .object(["code": .string(error.code), "message": .string(error.message)])
-        ]))
+        var payload: [String: JSONValue] = ["code": .string(error.code), "message": .string(error.message)]
+        if let details = error.details { payload["details"] = details }
+        emit(.object(["id": .int(id), "ok": .bool(false), "error": .object(payload)]))
     }
 
     /// Diagnostics never pollute stdout; the NDJSON stream must stay parseable.

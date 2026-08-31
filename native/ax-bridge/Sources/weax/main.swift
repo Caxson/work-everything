@@ -32,6 +32,7 @@ enum Bridge {
         if !buffer.isEmpty { process(line: buffer) }
         // stdin closed: the supervisor went away, so tear down instead of idling forever.
         DispatchQueue.main.async {
+            SessionRegistry.shared.releaseAll()
             ObserverRegistry.shared.teardownAll()
             exit(0)
         }
@@ -44,10 +45,7 @@ enum Bridge {
         do {
             request = try Request.parse(line: Data(trimmed))
         } catch let error as BridgeError {
-            Output.shared.emit(.object([
-                "id": .int(-1), "ok": .bool(false),
-                "error": .object(["code": .string(error.code), "message": .string(error.message)])
-            ]))
+            Output.shared.failure(id: -1, error: error)
             return
         } catch {
             return

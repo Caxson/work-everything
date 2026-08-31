@@ -78,17 +78,6 @@ enum Actions {
     }
 
     private static func post(_ spec: KeyEventSpec, source: CGEventSource, pid: pid_t) throws {
-        let isDown = spec.kind != .keyUp
-        guard let event = CGEvent(keyboardEventSource: source, virtualKey: spec.keyCode, keyDown: isDown) else {
-            throw BridgeError(code: "CG_ERROR", message: "could not create key event for \(spec.kind)")
-        }
-        if spec.kind == .flagsChanged { event.type = .flagsChanged }
-        // Always explicit, including the empty mask — never inherit.
-        event.flags = spec.flags
-        if let unicode = spec.unicode {
-            let utf16 = Array(unicode.utf16)
-            event.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
-        }
-        event.postToPid(pid)
+        try Keyboard.makeEvent(spec, source: source).postToPid(pid)
     }
 }

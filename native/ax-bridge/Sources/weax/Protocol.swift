@@ -113,8 +113,32 @@ struct Request {
 struct BridgeError: Error {
     let code: String
     let message: String
+    /// Optional structured diagnostics. Additive: a client that only reads `code` and
+    /// `message` is unaffected, one that wants counts does not have to parse prose.
+    let details: JSONValue?
+
+    init(code: String, message: String, details: JSONValue? = nil) {
+        self.code = code
+        self.message = message
+        self.details = details
+    }
 
     static func badRequest(_ m: String) -> BridgeError { BridgeError(code: "BAD_REQUEST", message: m) }
+
+    /// The screen is locked, which substitutes the application element for every window
+    /// and makes accessibility answer plausibly and wrongly. Deliberately its own code:
+    /// a caller must be able to tell it from "this app has no window", because no amount
+    /// of retrying fixes it and only a person can.
+    static func screenLocked(detectedBy: String) -> BridgeError {
+        BridgeError(code: "SCREEN_LOCKED",
+                    message: "the screen is locked; accessibility substitutes the application element for every "
+                        + "window, so window addressing cannot work until it is unlocked",
+                    details: .object(["detectedBy": .string(detectedBy)]))
+    }
+
+    static func noSuchSession(_ id: Int) -> BridgeError {
+        BridgeError(code: "NO_SUCH_SESSION", message: "unknown background session \(id)")
+    }
     static func notTrusted() -> BridgeError {
         BridgeError(code: "NOT_TRUSTED",
                     message: "this process is not trusted for Accessibility; grant it in System Settings > Privacy & Security > Accessibility")
