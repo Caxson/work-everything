@@ -89,16 +89,25 @@ function translate(error: unknown): ActionError {
 /**
  * What a failed focus already did.
  *
- * The bridge reports `keysSent: 0`, which is true and is read too generously:
- * the `auto` strategy order is press, then the focused attribute, then a real
- * mouse click, so a failure means the click has already been posted at the
- * element's centre. In a chat window that click can land on a message, a link
- * or a button. Saying only "no keys were sent" invites both a retry loop and
- * the belief that nothing happened, and neither is true.
+ * The helper reports `keysSent: 0`, which is true and is read too generously:
+ * the `auto` strategy order ends in a real mouse click, so a failure can mean
+ * a click has already been posted at the element's centre. In a chat window
+ * that click can land on a message, a link or a button. Saying only "no keys
+ * were sent" invites both a retry loop and the belief that nothing happened.
+ *
+ * Read from `claimedSuccess`, never from `attempted`. The helper appends to
+ * `attempted` **before** running a strategy and to `claimedSuccess` **after**
+ * it returns true, and the click strategy returns true only once the event has
+ * gone out. Two paths reach `attempted` and post nothing — no window number,
+ * and an element with no usable position or size — and both are swallowed by
+ * the `auto` catch. The second is the same `NO_FRAME` condition that stops a
+ * scroll, and it is most likely exactly when a composer is not drawn, which is
+ * also when focus most often fails. Deriving this from `attempted` would put
+ * the scariest sentence in the message precisely when nothing was clicked.
  */
 const CLICK_SIDE_EFFECT = (details: unknown): string => {
-  const attempted = readAttempted(details);
-  if (attempted !== undefined && !attempted.includes('click')) return '';
+  const claimed = readStrings(details, 'claimedSuccess');
+  if (claimed === undefined || !claimed.includes('click')) return '';
   return (
     'That is not a clean no-op, though: establishing focus already posted a real mouse click at the element centre, ' +
     'which in a chat window can land on whatever is there. Not retried — repeating it clicks again.'
@@ -112,9 +121,9 @@ function sentence(head: string, tail: string): string {
   return `${trimmed}${/[.!?]$/.test(trimmed) ? '' : '.'} ${tail}`;
 }
 
-function readAttempted(details: unknown): readonly string[] | undefined {
+function readStrings(details: unknown, key: string): readonly string[] | undefined {
   if (typeof details !== 'object' || details === null) return undefined;
-  const attempted = (details as { attempted?: unknown }).attempted;
-  if (!Array.isArray(attempted)) return undefined;
-  return attempted.filter((entry): entry is string => typeof entry === 'string');
+  const value = (details as Record<string, unknown>)[key];
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === 'string');
 }

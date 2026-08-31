@@ -168,7 +168,9 @@ function focusAndType(params) {
         message:
           `could not put the caret in node ${params.nodeId}, so no keys were sent. Tried press, focused, click. ` +
           'press, focused reported success and the focus did not land on the element afterwards',
-        details: { attempted: ['press', 'focused', 'click'], claimedSuccess: ['press', 'focused'], keysSent: 0 },
+        // The click was posted and focus still did not land: `claimedSuccess`
+        // carries it, which is what makes the side-effect warning true here.
+        details: { attempted: ['press', 'focused', 'click'], claimedSuccess: ['press', 'focused', 'click'], keysSent: 0 },
       },
     };
   }

@@ -33,6 +33,7 @@ describe('the write route into web content', () => {
         Promise.reject(
           new AxBridgeError('could not put the caret in node 5, so no keys were sent', 'FOCUS_FAILED', {
             attempted: ['press', 'focused', 'click'],
+            claimedSuccess: ['press', 'focused', 'click'],
             keysSent: 0,
           }),
         ),
@@ -50,13 +51,39 @@ describe('the write route into web content', () => {
     }
   });
 
-  it('does not claim a click happened when the helper says it never tried one', async () => {
-    // An explicit `focusVia` never reaches the click strategy, so the warning
-    // would be false. Saying it anyway would make it noise everyone learns to
-    // ignore, including in the case where it is true.
+  it('does not claim a click that was reached for but never posted', async () => {
+    // The one that matters. The helper records a strategy in `attempted`
+    // before running it and in `claimedSuccess` only once it succeeded, and
+    // the click throws NO_FRAME on an element with no usable position — which
+    // happens exactly when a composer is not drawn, which is also when focus
+    // most often fails. Reading `attempted` would put the scariest sentence in
+    // the message in the case where nothing was clicked at all.
     const transport: FocusAndTypeTransport = {
       focusAndType: () =>
-        Promise.reject(new AxBridgeError('focusVia=press only, and it did not apply', 'FOCUS_FAILED', { attempted: ['press'], keysSent: 0 })),
+        Promise.reject(
+          new AxBridgeError('could not put the caret in node 5', 'FOCUS_FAILED', {
+            attempted: ['press', 'focused', 'click'],
+            claimedSuccess: ['press'],
+            keysSent: 0,
+          }),
+        ),
+    };
+    try {
+      await bridgeKeyboardRoute(transport).focusAndType({ pid: 1, nodeId: 5, text: 'hi' });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect((error as ActionError).message).not.toContain('real mouse click');
+      expect((error as ActionError).code).toBe('FOCUS_FAILED');
+    }
+  });
+
+  it('does not claim a click happened when the helper says it never tried one', async () => {
+    // An explicit `focusVia` never reaches the click strategy at all.
+    const transport: FocusAndTypeTransport = {
+      focusAndType: () =>
+        Promise.reject(
+          new AxBridgeError('focusVia=press only, and it did not apply', 'FOCUS_FAILED', { attempted: ['press'], claimedSuccess: [], keysSent: 0 }),
+        ),
     };
     try {
       await bridgeKeyboardRoute(transport).focusAndType({ pid: 1, nodeId: 5, text: 'hi' });
