@@ -23,6 +23,8 @@ import type { ChatSnapshot } from './messages.js';
 import { parseSnapshot } from './messages.js';
 import type { FeishuHealthConfig } from './health.js';
 import { FeishuHealthMonitor } from './health.js';
+import type { ScreenSaverProbe } from '../macos/screenSaver.js';
+import { isScreenSaverRunning } from '../macos/screenSaver.js';
 import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID, ROLE, TREE_MAX_DEPTH, TREE_MAX_NODES } from './selectors.js';
 
 export interface FeishuReaderConfig {
@@ -80,21 +82,24 @@ export class FeishuReader {
  * the perceiver, the sender, `we run`'s preflight and the end-to-end check —
  * asks the same question the same way, and re-resolves the pid every time.
  *
- * There is no local screen-lock probe any more. The helper answers with a
- * classified diagnosis that sees both the session's lock state and the window
- * server's census, which is strictly more than `ioreg` could tell us and — for
- * a screen saver running on an unlocked session — the only thing that gets the
- * answer right.
+ * There is no local screen-lock probe any more, and the reason is worth
+ * recording accurately: the helper's lock check reads
+ * `CGSSessionScreenIsLocked` out of `CGSessionCopyCurrentDictionary`, which is
+ * the **same key** the `ioreg` probe here used to parse. That was a duplicate,
+ * not a weaker detector, and both are equally blind to a screen saver. Screen
+ * saver coverage comes from somewhere else entirely — the window-server census
+ * in the helper's diagnosis, plus `screenSaver.ts`.
  */
 export function feishuHealthMonitor(
   client: AxBridgeClient,
   reader: FeishuReader,
-  options: { readonly config?: FeishuHealthConfig } = {},
+  options: { readonly config?: FeishuHealthConfig; readonly screenSaverRunning?: ScreenSaverProbe } = {},
 ): FeishuHealthMonitor {
   return new FeishuHealthMonitor({
     pid: () => reader.pid(true),
     windows: (pid) => client.windows(pid),
     webAreas: (pid) => reader.webAreas(pid),
+    screenSaverRunning: options.screenSaverRunning ?? isScreenSaverRunning,
     ...(options.config === undefined ? {} : { config: options.config }),
   });
 }

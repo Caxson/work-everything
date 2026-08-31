@@ -199,7 +199,17 @@ function windows(request) {
       SCREEN_LOCKED: undefined,
       NO_WINDOW: { cgWindows: 0, onScreen: 0, desktopOnScreen: 42, desktopOwnersOnScreen: 12 },
       DESKTOP_BLANK: { cgWindows: 3, onScreen: 0, desktopOnScreen: 8, desktopOwnersOnScreen: 1, scope: 'desktop' },
-      NOT_DRAWN: { cgWindows: 3, onScreen: 0, desktopOnScreen: 42, desktopOwnersOnScreen: 12, scope: 'application' },
+      // The measured screen-saver payload, verbatim: scope is "application"
+      // and eight processes are still drawing, which is exactly why `scope`
+      // cannot be what identifies a screen saver.
+      NOT_DRAWN: {
+        cgWindows: 5,
+        onScreen: 0,
+        desktopOnScreen: 25,
+        desktopOwnersOnScreen: 8,
+        scope: 'application',
+        axWindows: { entries: 0, selfEqual: 0, real: 0, nonElement: 0 },
+      },
     }[diagnosis];
     const code = diagnosis === 'DESKTOP_BLANK' || diagnosis === 'NOT_DRAWN' ? 'AX_SEES_NO_WINDOWS_BUT_CG_DOES' : diagnosis;
     const body = { code, message: `fake ${diagnosis}`, ...(details === undefined ? {} : { details }) };

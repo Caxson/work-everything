@@ -12,10 +12,28 @@ import type { AxNode, WindowDiagnosis } from '../src/perception/macos/axProtocol
 const PID = 4242;
 const OK: WindowDiagnosis = { code: 'OK', addressable: 1 };
 
+/**
+ * The real answer `windows {meta:true}` gave for pid 730 while
+ * `legacyScreenSaver` was running and the session was unlocked. Kept verbatim
+ * so the tests are pinned to what the machine did, not to what we expected.
+ */
+const SCREEN_SAVER_READING: WindowDiagnosis = {
+  code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+  details: {
+    cgWindows: 5,
+    onScreen: 0,
+    desktopOnScreen: 25,
+    desktopOwnersOnScreen: 8,
+    scope: 'application',
+    axWindows: { entries: 0, selfEqual: 0, real: 0, nonElement: 0 },
+  },
+};
+
 function reading(overrides: Partial<HealthObservation> = {}): HealthObservation {
   return {
     pid: PID,
     diagnosis: OK,
+    screenSaverRunning: false,
     windows: [{ role: 'AXWindow', title: '飞书' }],
     webAreaTitles: ['messenger', 'messenger-chat'],
     failures: 0,
@@ -62,29 +80,46 @@ describe('the four reasons an app exposes no window', () => {
     expect(health.detail).not.toContain('restart');
   });
 
-  it('a blank desktop: a screen saver, on a Mac that is not locked', () => {
-    // Measured: a running screen saver takes accessibility windows away from
-    // every application while CGSSessionScreenIsLocked stays false. Telling
-    // somebody to unlock a Mac that is not locked is the failure to avoid.
-    const health = classifyHealth(
-      reading({
-        windows: [],
-        diagnosis: {
-          code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
-          message: 'nothing is compositing',
-          details: { cgWindows: 3, onScreen: 0, desktopOnScreen: 8, desktopOwnersOnScreen: 1, scope: 'desktop' },
-        },
-      }),
-    );
+  it('a running screen saver: wait for it, and do not go looking for a password', () => {
+    // MEASURED, not reasoned about. This is the literal payload `windows`
+    // returned for pid 730 with legacyScreenSaver running and the session
+    // unlocked. Note `scope: "application"` and eight processes still
+    // drawing — the helper's `owners <= 1` rule does not fire here.
+    const health = classifyHealth(reading({ windows: [], diagnosis: SCREEN_SAVER_READING, screenSaverRunning: true }));
     expect(health.state).toBe('desktop_blank');
     expect(health.detail).toContain('screen saver');
     expect(health.detail).toContain('not locked');
     expect(health.detail).not.toContain('restart Feishu');
     // The census is the evidence, so it travels with the verdict.
-    expect(health.detail).toContain('8 on screen machine-wide across 1 process');
+    expect(health.detail).toContain('25 on screen machine-wide across 8 process');
   });
 
-  it('windows that exist but are not being drawn: this application only', () => {
+  it('would have missed that case entirely on `scope` alone', () => {
+    // The same measured payload, with nothing asking whether a screen saver
+    // is running: `scope` says "application", so the desktop-wide state never
+    // fires. This is why the classification is not built on it.
+    const health = classifyHealth(reading({ windows: [], diagnosis: SCREEN_SAVER_READING, screenSaverRunning: false }));
+    expect(health.state).toBe('not_drawn');
+  });
+
+  it('still reports a desktop that is genuinely drawing nothing', () => {
+    const health = classifyHealth(
+      reading({
+        windows: [],
+        screenSaverRunning: false,
+        diagnosis: {
+          code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+          message: 'nothing is compositing',
+          details: { cgWindows: 3, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop' },
+        },
+      }),
+    );
+    expect(health.state).toBe('desktop_blank');
+    expect(health.detail).toContain('nothing on this machine is being drawn');
+    expect(health.detail).not.toContain('screen saver');
+  });
+
+  it('windows that exist but are not being drawn, with no screen saver behind it', () => {
     const health = classifyHealth(
       reading({
         windows: [],
@@ -158,6 +193,43 @@ describe('the health monitor', () => {
     });
     expect((await made.check()).pid).toBe(101);
     expect((await made.check()).pid).toBe(102);
+  });
+
+  it('asks whether a screen saver is running only when that could be the answer', async () => {
+    // A subprocess on every poll for a question that is almost always
+    // irrelevant is a cost with no reader.
+    const probes: string[] = [];
+    const make = (diagnosis: WindowDiagnosis): FeishuHealthMonitor =>
+      new FeishuHealthMonitor({
+        pid: async () => PID,
+        windows: async () => ({ windows: [], diagnosis }),
+        webAreas: async () => [],
+        screenSaverRunning: async () => {
+          probes.push('asked');
+          return true;
+        },
+      });
+
+    await make({ code: 'OK', addressable: 1 }).check();
+    await make({ code: 'NO_WINDOW' }).check();
+    await make({ code: 'SCREEN_LOCKED' }).check();
+    expect(probes).toEqual([]);
+
+    const health = await make(SCREEN_SAVER_READING).check();
+    expect(probes).toEqual(['asked']);
+    expect(health.state).toBe('desktop_blank');
+  });
+
+  it('falls back to the general answer when the probe itself fails', async () => {
+    const made = new FeishuHealthMonitor({
+      pid: async () => PID,
+      windows: async () => ({ windows: [], diagnosis: SCREEN_SAVER_READING }),
+      webAreas: async () => [],
+      screenSaverRunning: async () => {
+        throw new Error('pgrep is not here');
+      },
+    });
+    expect((await made.check()).state).toBe('not_drawn');
   });
 
   it('takes the diagnosis from the helper rather than inferring one', async () => {
