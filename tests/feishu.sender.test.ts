@@ -43,9 +43,7 @@ afterEach(async () => {
   open = undefined;
 });
 
-function rig(
-  options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[]; wedgedAfter?: number; realTime?: boolean; screenSaver?: boolean } = {},
-): Rig {
+function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[]; wedgedAfter?: number; realTime?: boolean } = {}): Rig {
   const log: LogEntry[] = [];
   const spawnFn = (): ChildProcessWithoutNullStreams => {
     const child = spawn(process.execPath, [helper], {
@@ -72,12 +70,7 @@ function rig(
   const reader = new FeishuReader(client, { bundleId: FEISHU, appPath: '/Applications/Lark.app', selfName: SELF_CHAT, now: () => now });
   const routes = new ChatRouteTable();
   const ledger = new SentLedger();
-  const monitor = feishuHealthMonitor(client, reader, {
-    config: { wedgedAfter: options.wedgedAfter ?? 3 },
-    // Injected so a unit test never shells out, and never depends on whether
-    // this machine happens to have a screen saver running.
-    screenSaverRunning: async () => options.screenSaver === true,
-  });
+  const monitor = feishuHealthMonitor(client, reader, { config: { wedgedAfter: options.wedgedAfter ?? 3 } });
 
   const snapshots = new SnapshotStore();
   const actions = new ActionRegistry([
@@ -221,10 +214,10 @@ describe('feishu.reply', () => {
   });
 
   it('does not tell a person to unlock a Mac that is not locked', async () => {
-    // A running screen saver takes accessibility windows away from every
+    // A displaying screen saver takes accessibility windows away from every
     // application while the session stays unlocked. Reported as a lock, the
     // advice would be wrong and the person would go looking for a password.
-    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' }, screenSaver: true });
+    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' } });
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
     expect(result.ok).toBe(false);
     expect(result.error).toContain('screen saver');
@@ -239,21 +232,14 @@ describe('feishu.reply', () => {
     expect(result.error).toContain('nothing on this machine is being drawn');
   });
 
-  it('separates a screen saver from this app not being drawn, on the same reading', async () => {
-    // Same helper answer both times — the measured one, scope "application".
-    // What separates them is whether a screen saver is actually running, which
-    // is the only direct evidence there is.
-    const covered = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' }, screenSaver: true });
-    const running = await covered.executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
-    expect(running.error).toContain('screen saver');
-    expect(running.error).toContain('not locked');
-    expect(inputs(covered.log)).toEqual([]);
-
-    const plain = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' } });
-    const idle = await plain.executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
-    expect(idle.error).toContain('another space');
-    expect(idle.error).not.toContain('screen saver');
-    expect(inputs(plain.log)).toEqual([]);
+  it('offers the possibilities instead of asserting the wrong one', async () => {
+    // Nothing on this side can tell a displaying screen saver from a window on
+    // another space, so the message says both and asserts neither.
+    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' } });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
+    expect(result.error).toContain('another space');
+    expect(result.error).toContain('screen saver');
+    expect(inputs(log)).toEqual([]);
   });
 
   it('never asks the app to come to the front', async () => {

@@ -23,8 +23,6 @@ import type { ChatSnapshot } from './messages.js';
 import { parseSnapshot } from './messages.js';
 import type { FeishuHealthConfig } from './health.js';
 import { FeishuHealthMonitor } from './health.js';
-import type { ScreenSaverProbe } from '../macos/screenSaver.js';
-import { isScreenSaverRunning } from '../macos/screenSaver.js';
 import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID, ROLE, TREE_MAX_DEPTH, TREE_MAX_NODES } from './selectors.js';
 
 export interface FeishuReaderConfig {
@@ -87,19 +85,18 @@ export class FeishuReader {
  * `CGSSessionScreenIsLocked` out of `CGSessionCopyCurrentDictionary`, which is
  * the **same key** the `ioreg` probe here used to parse. That was a duplicate,
  * not a weaker detector, and both are equally blind to a screen saver. Screen
- * saver coverage comes from somewhere else entirely — the window-server census
- * in the helper's diagnosis, plus `screenSaver.ts`.
+ * saver coverage would have to come from the window-server census in the
+ * helper's diagnosis; it is not something this side can read.
  */
 export function feishuHealthMonitor(
   client: AxBridgeClient,
   reader: FeishuReader,
-  options: { readonly config?: FeishuHealthConfig; readonly screenSaverRunning?: ScreenSaverProbe } = {},
+  options: { readonly config?: FeishuHealthConfig } = {},
 ): FeishuHealthMonitor {
   return new FeishuHealthMonitor({
     pid: () => reader.pid(true),
     windows: (pid) => client.windows(pid),
     webAreas: (pid) => reader.webAreas(pid),
-    screenSaverRunning: options.screenSaverRunning ?? isScreenSaverRunning,
     ...(options.config === undefined ? {} : { config: options.config }),
   });
 }

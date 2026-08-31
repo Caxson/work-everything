@@ -33,7 +33,6 @@ function reading(overrides: Partial<HealthObservation> = {}): HealthObservation 
   return {
     pid: PID,
     diagnosis: OK,
-    screenSaverRunning: false,
     windows: [{ role: 'AXWindow', title: '飞书' }],
     webAreaTitles: ['messenger', 'messenger-chat'],
     failures: 0,
@@ -80,13 +79,14 @@ describe('the four reasons an app exposes no window', () => {
     expect(health.detail).not.toContain('restart');
   });
 
-  it('a running screen saver: wait for it, and do not go looking for a password', () => {
-    // MEASURED, not reasoned about. This is the literal payload `windows`
-    // returned for pid 730 with legacyScreenSaver running and the session
-    // unlocked. Note `scope: "application"` and eight processes still
-    // drawing — the helper's `owners <= 1` rule does not fire here.
-    const health = classifyHealth(reading({ windows: [], diagnosis: SCREEN_SAVER_READING, screenSaverRunning: true }));
-    expect(health.state).toBe('desktop_blank');
+  it('names a screen saver as a possibility without asserting one', () => {
+    // MEASURED. This is the literal payload `windows` returned for pid 730
+    // with the desktop in this state. `scope` is "application" and eight
+    // processes were still drawing, so the desktop-wide rule does not fire —
+    // and there is no signal here that separates a displaying screen saver
+    // from a window on another space. The message says so instead of picking.
+    const health = classifyHealth(reading({ windows: [], diagnosis: SCREEN_SAVER_READING }));
+    expect(health.state).toBe('not_drawn');
     expect(health.detail).toContain('screen saver');
     expect(health.detail).toContain('not locked');
     expect(health.detail).not.toContain('restart Feishu');
@@ -94,19 +94,10 @@ describe('the four reasons an app exposes no window', () => {
     expect(health.detail).toContain('25 on screen machine-wide across 8 process');
   });
 
-  it('would have missed that case entirely on `scope` alone', () => {
-    // The same measured payload, with nothing asking whether a screen saver
-    // is running: `scope` says "application", so the desktop-wide state never
-    // fires. This is why the classification is not built on it.
-    const health = classifyHealth(reading({ windows: [], diagnosis: SCREEN_SAVER_READING, screenSaverRunning: false }));
-    expect(health.state).toBe('not_drawn');
-  });
-
   it('still reports a desktop that is genuinely drawing nothing', () => {
     const health = classifyHealth(
       reading({
         windows: [],
-        screenSaverRunning: false,
         diagnosis: {
           code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
           message: 'nothing is compositing',
@@ -195,39 +186,17 @@ describe('the health monitor', () => {
     expect((await made.check()).pid).toBe(102);
   });
 
-  it('asks whether a screen saver is running only when that could be the answer', async () => {
-    // A subprocess on every poll for a question that is almost always
-    // irrelevant is a cost with no reader.
-    const probes: string[] = [];
-    const make = (diagnosis: WindowDiagnosis): FeishuHealthMonitor =>
-      new FeishuHealthMonitor({
-        pid: async () => PID,
-        windows: async () => ({ windows: [], diagnosis }),
-        webAreas: async () => [],
-        screenSaverRunning: async () => {
-          probes.push('asked');
-          return true;
-        },
-      });
-
-    await make({ code: 'OK', addressable: 1 }).check();
-    await make({ code: 'NO_WINDOW' }).check();
-    await make({ code: 'SCREEN_LOCKED' }).check();
-    expect(probes).toEqual([]);
-
-    const health = await make(SCREEN_SAVER_READING).check();
-    expect(probes).toEqual(['asked']);
-    expect(health.state).toBe('desktop_blank');
-  });
-
-  it('falls back to the general answer when the probe itself fails', async () => {
+  it('spawns nothing to reach a verdict', async () => {
+    // There was a `pgrep` here for "is a screen saver running". It was a live
+    // false positive: `legacyScreenSaver` is a long-lived host that lingers
+    // after the saver stops — measured at nineteen days old on a machine
+    // somebody was using — so it told an active user to wait for a screen
+    // saver that was not on screen. The signal that would work is the saver's
+    // own on-screen window, which only the helper can read.
     const made = new FeishuHealthMonitor({
       pid: async () => PID,
       windows: async () => ({ windows: [], diagnosis: SCREEN_SAVER_READING }),
       webAreas: async () => [],
-      screenSaverRunning: async () => {
-        throw new Error('pgrep is not here');
-      },
     });
     expect((await made.check()).state).toBe('not_drawn');
   });

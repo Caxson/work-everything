@@ -21,17 +21,24 @@
  * it can see the window server's census, which is not visible from a count
  * here — and this file turns that classification into a state and a sentence.
  *
- * One cause is not in the helper's classification and had to be measured: a
- * running **screen saver** takes accessibility windows away from every
- * application exactly the way a lock does, while the session stays unlocked.
- * Measured with `legacyScreenSaver` running, `windows` answered
- * `AX_SEES_NO_WINDOWS_BUT_CG_DOES` with `scope: "application"` and eight
- * processes still drawing — so it arrives as neither `SCREEN_LOCKED` nor
- * `scope: "desktop"`, and telling that person to unlock a Mac that is not
- * locked would send them looking for a password they do not need. The only
- * direct evidence is whether the process is running, so that is what is
- * asked — and only when the helper has already said the windows are not
- * being drawn.
+ * One cause is deliberately **not** distinguished here, and the reason is
+ * worth recording so nobody re-adds the broken version. A displaying screen
+ * saver takes accessibility windows away from every application the way a
+ * lock does, while the session stays unlocked — so it is neither
+ * `SCREEN_LOCKED` nor, measured, `scope: "desktop"` (it came back
+ * `scope: "application"` with eight processes still drawing). The obvious
+ * detector, "is the screen saver process running", is wrong: `legacyScreenSaver`
+ * is a long-lived host for saver plugins and lingers after the saver stops —
+ * measured at nineteen days old on a machine somebody was actively using, with
+ * its single window not on screen. Asking it would tell that person to go wait
+ * for a screen saver that is not there.
+ *
+ * The signal that does separate the two states is the saver's own window being
+ * on screen, which lives in `CGWindowList` — readable by the helper, which
+ * already builds the census, and not readable from here without a native
+ * binding. So this file consumes a diagnosis and does not invent one. Until
+ * the helper reports it, a displaying screen saver reads as `not_drawn`, whose
+ * message names it as one of the possibilities rather than asserting it.
  *
  * `wedged` stays terminal and stays hard to reach: only an app that has
  * windows the helper can address, and no web content in them, across several
@@ -64,12 +71,6 @@ export interface HealthObservation {
   readonly pid: number;
   /** The helper's classification of the window situation. Authoritative. */
   readonly diagnosis: WindowDiagnosis;
-  /**
-   * Whether a screen saver was running when this reading was taken. Only
-   * asked when the helper has already reported windows that are not drawn;
-   * `false` everywhere else, including "was not asked".
-   */
-  readonly screenSaverRunning: boolean;
   /** The windows it returned, for the modal filter this app needs. */
   readonly windows: readonly Pick<AxNode, 'role' | 'title'>[];
   /** Titles of every `AXWebArea` found. Zero, with a window, is the wedge. */
@@ -101,7 +102,7 @@ export function realWindows(windows: HealthObservation['windows']): HealthObserv
  * The states the helper's own classification decides on its own. `undefined`
  * means it found addressable windows and the verdict is this file's to make.
  */
-function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis, screenSaverRunning: boolean): FeishuHealth | undefined {
+function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis): FeishuHealth | undefined {
   switch (diagnosis.code) {
     case 'OK':
       return undefined;
@@ -114,7 +115,7 @@ function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis, screenSaverRunni
     case 'NO_WINDOW':
       return { state: 'no_window', pid, detail: `Feishu shows no window (closed to the tray, or a menu-bar-only state). ${census(diagnosis)}`.trim() };
     case 'AX_SEES_NO_WINDOWS_BUT_CG_DOES':
-      return notDrawn(pid, diagnosis, screenSaverRunning);
+      return notDrawn(pid, diagnosis);
     default:
       // A cause the helper has learned to tell apart and this file has not.
       // Reported in its own words rather than guessed at.
@@ -125,23 +126,13 @@ function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis, screenSaverRunni
 /**
  * Windows exist and none of them is drawn — but why.
  *
- * Evidence first, inference second. A screen saver that is actually running
- * is a fact and gets its own answer, because the advice is completely
- * different: wait, do not go looking for a password. `scope: "desktop"` is
- * the helper's inference from `desktopOwnersOnScreen <= 1`, which is a rarer
- * and stricter condition than a screen saver — it was measured at eight
- * owners with one running — so it is consulted second and never alone.
+ * `scope: "desktop"` is the helper's inference from `desktopOwnersOnScreen <= 1`:
+ * a desktop where only one process has anything on screen genuinely is not
+ * compositing. That is a stricter and rarer condition than a screen saver
+ * displaying, which was measured at eight owners still drawing — so it does
+ * not cover that case and is not stretched to pretend it does.
  */
-function notDrawn(pid: number, diagnosis: WindowDiagnosis, screenSaverRunning: boolean): FeishuHealth {
-  if (screenSaverRunning) {
-    return {
-      state: 'desktop_blank',
-      pid,
-      detail:
-        'a screen saver is running, which takes the accessibility windows away from every application while the session stays unlocked. ' +
-        `Wait for it to exit — the Mac is not locked, and unlocking is not what is needed. ${census(diagnosis)}`.trim(),
-    };
-  }
+function notDrawn(pid: number, diagnosis: WindowDiagnosis): FeishuHealth {
   if (diagnosis.details?.scope === 'desktop') {
     return {
       state: 'desktop_blank',
@@ -153,8 +144,8 @@ function notDrawn(pid: number, diagnosis: WindowDiagnosis, screenSaverRunning: b
     state: 'not_drawn',
     pid,
     detail:
-      'Feishu has windows that are not being drawn — another space, minimised, or something covering the desktop. ' +
-      `Bring it to a space that is drawing. ${census(diagnosis)}`.trim(),
+      'Feishu has windows that are not being drawn — another space, minimised, or something covering the desktop such as a screen saver. ' +
+      `The Mac is not locked, so unlocking is not what is needed. ${census(diagnosis)}`.trim(),
   };
 }
 
@@ -173,7 +164,7 @@ function census(diagnosis: WindowDiagnosis): string {
 /** The verdict for one reading. Pure: every input it needs is in `observation`. */
 export function classifyHealth(observation: HealthObservation, config: FeishuHealthConfig = DEFAULT_FEISHU_HEALTH_CONFIG): FeishuHealth {
   const { pid } = observation;
-  const diagnosed = fromDiagnosis(pid, observation.diagnosis, observation.screenSaverRunning);
+  const diagnosed = fromDiagnosis(pid, observation.diagnosis);
   if (diagnosed !== undefined) return diagnosed;
 
   // The helper found windows it can address. Anything wrong from here is
@@ -215,11 +206,6 @@ export interface FeishuHealthDeps {
   /** The helper's classified window reading. */
   readonly windows: (pid: number) => Promise<{ readonly windows: readonly AxNode[]; readonly diagnosis: WindowDiagnosis }>;
   readonly webAreas: (pid: number) => Promise<readonly AxNode[]>;
-  /**
-   * Whether a screen saver is running. Asked only when the helper has already
-   * said the windows are not being drawn, so the happy path pays nothing.
-   */
-  readonly screenSaverRunning?: () => Promise<boolean>;
   readonly config?: FeishuHealthConfig;
 }
 
@@ -249,13 +235,11 @@ export class FeishuHealthMonitor {
     }
 
     const [reading, webAreas] = await Promise.all([this.deps.windows(pid), this.deps.webAreas(pid).catch(() => [])]);
-    const screenSaverRunning = reading.diagnosis.code === 'AX_SEES_NO_WINDOWS_BUT_CG_DOES' ? await this.screenSaver() : false;
 
     const health = classifyHealth(
       {
         pid,
         diagnosis: reading.diagnosis,
-        screenSaverRunning,
         windows: reading.windows.map((window) => ({ role: window.role, title: window.title })),
         webAreaTitles: webAreas.map((area) => area.title ?? '').filter((title) => title !== ''),
         failures: this.failures,
@@ -269,12 +253,6 @@ export class FeishuHealthMonitor {
     }
     this.failures += 1;
     return health;
-  }
-
-  private async screenSaver(): Promise<boolean> {
-    const probe = this.deps.screenSaverRunning;
-    if (probe === undefined) return false;
-    return await probe().catch(() => false);
   }
 
   /** Throwing form, for the paths that must not continue on a wedged app. */

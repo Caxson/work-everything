@@ -30,7 +30,6 @@ export * from './perception/base.js';
 export * from './perception/macos/axProtocol.js';
 export * from './perception/macos/axBridge.js';
 export * from './perception/macos/axAwait.js';
-export * from './perception/macos/screenSaver.js';
 export * from './memory/db.js';
 export * from './memory/trajectory.js';
 export * from './memory/registry.js';
