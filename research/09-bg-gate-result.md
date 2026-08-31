@@ -26,6 +26,19 @@
      而不是让上层拿到一棵残缺树却以为是完整的；
   3. 判活标准用「`AXWebArea` 命中数 > 0」，不要用节点总数（菜单栏本身就有 300+ 节点，很容易误判为"树已就绪"）。
 
+**③ AX 只暴露「已合成上屏」的窗口；没上屏的窗口 = AX 里不存在，且报 success。**（实测见 §11）
+
+- 实测状态：`AXUIElementCopyAttributeValue(app, kAXWindows)` 返回 **`err = success` 且 `count = 0`**，
+  同时 `CGWindowListCopyWindowInfo(.optionAll)` 对同一个 pid 有 4 个窗口 —— 但 `.optionOnScreenOnly` 里一个都没有。
+- 触发条件：app 从未被激活、窗口只 `orderFront`（甚至 `orderFrontRegardless()` 也救不回来），
+  在某些桌面/Space 状态下窗口停在「存在但未合成」。
+- **失败方式是静默的**：错误码是 success，只有 count 是 0。任何「`== .success` 就继续、否则返回空数组」的写法
+  都会把这个状态误报成「这个 app 没有窗口」。**我自己就栽在这里**（见 §11）。
+- **生产实现要求**：
+  1. `AXWindows` 取空时必须**交叉核对 `CGWindowListCopyWindowInfo`**：CG 有而 AX 无 ⇒ 环境问题，不是「无窗口」，要报可诊断错误；
+  2. 任何依赖窗口的流程（窗口寻址、遮挡、最小化、坐标动作）跑之前，先用**自己可控的金丝雀目标**断言这项能力；
+  3. 不要用 `CGSSessionScreenIsLocked` 当唯一前置——它只覆盖锁屏，覆盖不了这个状态。
+
 **② 锁屏会让窗口寻址整体失效，且失败方式是静默的。**（实测见 §0）
 
 - 锁屏下 `AXWindows` 返回的**每一项都 `CFEqual` 于应用元素本身**（数量还是对的），
@@ -541,6 +554,82 @@ STATE isActive=true  front=loginwindow  W1/95463 isKey=true isMain=true
 - `bggate/out/jget.py` —— JSON 取值统一走它。**踩过的坑**：`sed` 的范围匹配 `/"window"/,/}/` 会被嵌套的 `roles` 对象的 `}` 提前截断，导致 `webAreas` 静默抽空；脚本里所有取值因此不再用 sed。
 
 **没有做自动等待解锁再触发**：写过一版轮询解锁即自动开跑的守候脚本，被权限分类器拦下，我没有绕。这个判断是对的——趁用户刚解锁的瞬间自动拉起 GUI 自动化，本来就该由人点这一下。解锁后手动跑一条命令即可：
+
+---
+
+## 11. r2 复核（2026-08-31 09:17–09:18 那轮）：S1/S2 有效，S3–S9 全部作废
+
+team-lead 修了一处变量引用后跑完了 `run-round2.sh`。我逐份核对了凭证，结论如下。
+
+### 11.1 S1/S2 有效 —— contenteditable 结论可以定案
+
+`evidence/r2/S1-chrome-windows.json`：`resolvedBy = axSPI`，frame = `[66, 55, 900, 700]`（真实几何）。
+`evidence/r2/S1-cef-tree.json`：`pass1.window 38 节点 / 0 webArea` → `pass2.window 49 节点 / 1 webArea`——
+唤醒模式与我 §9.2 的测量逐条复现。**说明 S1/S2 阶段环境是健康的**，S2 的 contenteditable 电池组结论成立：
+
+| 手段 | result | 页面事件 | 判定 |
+|---|---|---|---|
+| `SetAttributeValue(AXValue)` | success | 无 beforeinput/input | ❌ 假成功 |
+| `AXFocused=true` | success | 仅 focus | ❌ |
+| `AXSelectedTextRange` | success | 无 | ❌ |
+| `AXSelectedText` | success | 无 | ❌ |
+| `AXPress` | success | 无 | ❌ |
+| `AXConfirm` | success | 无 | ❌ |
+| **`AXPress` 聚焦 + `postToPid` 键盘** | — | **keydown/keypress/beforeinput/textInput/input 全套** | ✅ **唯一真写入** |
+| 对照：普通 `<input>` 的 `AXValue` | success | 值真的写进去了 | ✅（证明不是我们用错 API） |
+
+→ **飞书类 contenteditable 的「写」必须走私有 `postToPid`**，公共 AX 六种手段全是假成功。
+且混合路线 `frontmostUnchanged=True`、`cursorDelta=0`。
+
+### 11.2 S3–S9 全部作废 —— 一个根因
+
+team-lead 判断 S7/S8/S9 不可信，是对的；但三步不是各自出问题，**是同一个根因**：
+
+- `evidence/r2/S3-ax-resolution.json`：ProbeB **`axWindows count = 0`，而 `cgWindows = 4`**。
+- 于是 `axact setwin` 两次都返回 `{"count": 0, "error": "INDEX_OOR"}`（S8-cover / S9-minimize）——
+  **遮挡和最小化根本没执行**。
+- 因此 S8 的 hit-test 返回 `pid=684`（Ghostty）是**正确读数**：探针从未移动过，中心点上本来就是别的窗口。
+  前提没成立，那一步没有结论。
+- 因此 S7/S8/S9 的 CEF 读数全是 `311 节点 / 0 webArea` 的未唤醒 stub。
+
+### 11.3 根因定位：窗口存在但没上屏
+
+按归因纪律先证伪自己，逐层排掉：
+
+| 假设 | 检验 | 结果 |
+|---|---|---|
+| 我传错 pid | 核对 `launchedPID` = 64584 / 64843 | ❌ pid 正确 |
+| 等待不够 | 新起探针，在 +0.5s/+1.5s/+3s/+5s 各查一次 | ❌ 全是 0 |
+| AX 调用失败被我吞掉 | `axwin` 直接打错误码 | `err = 0 (success)`，count 就是 0 |
+| 锁屏 | `CGSSessionScreenIsLocked` | ❌ absent，未锁屏 |
+| 显示器睡眠 | `CGDisplayIsAsleep/IsActive/IsOnline` | ❌ false/true/true，醒着 |
+| 屏保 | `pgrep ScreenSaverEngine` | ❌ 无 |
+| AX 权限掉了 | `AXIsProcessTrusted` | ❌ true，且 Ghostty/Finder 的窗口读得到 |
+| **窗口没上屏** | `CGWindowList` 两种模式对比 | ✅ **`.optionAll` 有 4 个，`.optionOnScreenOnly` 一个都没有**；全系统 onScreen 只有 **9/344** |
+
+**根因：探针窗口处于「存在但未合成上屏」状态，AX 对未上屏窗口不暴露，且报 success。**
+我把探针的 `orderFront(nil)` 改成了 `orderFrontRegardless()`（这个 API 本来就更适合非活跃 app），
+但**实测仍未上屏** —— 说明这是当前桌面/Space 的环境状态，不是 API 选择问题。改动保留，因为它本来就更正确。
+
+### 11.4 已修（防止同类假读数再发生）
+
+| 修复 | 位置 | 说明 |
+|---|---|---|
+| **能力预检金丝雀** | `run-round2.sh` S-0 | 先起自己的探针，断言 `healthy=true`（AX 有窗口 + `axSPI` + 几何可读），不过就 `exit 92`。只查锁屏是不够的 |
+| **`windows` 不再静默失败** | `driver/main.swift` | 新增 `axWindowsError` / `axVisible` / `healthy` / `diagnosis`，能区分「AX 调用失败」「AX 说没窗口」「CG 有而 AX 无（环境问题）」 |
+| **轮询到 AXWebArea 出现** | `driver/main.swift` `--poll-webarea-ms` | 同一进程内反复遍历直到 webArea 出现或超时；输出 `treeState = awake / window-but-no-webarea / stub-not-woken-or-no-window`。换进程等于重新变冷，所以必须在进程内轮询 |
+| **`setwin` 先唤醒再取窗口** | `out/axact.swift` | 之前直接读 `AXWindows`，对 Chromium 必然拿到空数组；现在先遍历唤醒 + 最多 3s 轮询，失败时报 `NO_WINDOW_VISIBLE_TO_AX` 并带上错误码与提示 |
+| **S8 前提门禁** | `run-round2.sh` | hit-test 必须返回探针 pid 才算遮挡成立，最多重试 3 次；不成立则明确输出「未测成，不出结论」 |
+| **S9 前提门禁** | `run-round2.sh` | `nowMinimized` 不为 true 就报「未测成」，不读树、不出结论 |
+
+### 11.5 S7/S8/S9 现在的结论
+
+**三条都是「未测成」，不是「测出来树没了」。** 当前环境仍处于 §11.3 的状态——
+我在 09:25 又起了一个全新探针复验：`healthy=False`、`AX_SEES_NO_WINDOWS_BUT_CG_DOES`、
+全系统 onScreen 仍是 9 个窗口。此时复跑只会再产一批同样的假读数，所以新的预检直接 `exit 92` 拦住了。
+
+要跑通，需要机器回到「后台 app 的窗口能正常上屏」的状态（症状很好认：
+**全系统 onScreen 窗口数只有个位数，新开的窗口进不了 onScreen 列表**）。恢复后：
 
 ```bash
 cd /Users/caosen/.claude/jobs/ae02c800/tmp/bggate && ./run-round2.sh

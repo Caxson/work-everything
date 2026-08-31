@@ -23,7 +23,12 @@ note() { printf '    %s\n' "$*"; }
 # JSON 取值一律走 python：sed 的范围匹配会被嵌套对象的 } 截断（实测踩过这个坑）
 jget() { python3 "$JG" "$1" "$2"; }
 inv()  { note "不变量: frontmostUnchanged=$(jget "$1" frontmostUnchanged) cursorDelta=$(jget "$1" cursorDelta)"; }
-cefread() { "$BG" axread --pid "$1" --window-index 0 --wait-ms 700 --rescan > "$2"; note "$3 -> $(jget "$2" __cef)"; }
+# CEF 读树：必须轮询到 AXWebArea 出现，绝不接受 311 这种"未唤醒 stub"当作"树没了"。
+# treeState: awake | window-but-no-webarea | stub-not-woken-or-no-window
+cefread() {
+  "$BG" axread --pid "$1" --window-index 0 --wait-ms 300 --rescan --poll-webarea-ms 6000 > "$2"
+  note "$3 -> treeState=$(jget "$2" treeState) pollRounds=$(jget "$2" pollRounds) | $(jget "$2" __cef)"
+}
 # 页面自己把状态写进 document.title，从窗口标题只读回显，不需要截图
 pagestate() { "$BG" windows --pid "$PC" > "$EV/_t.json"; jget "$EV/_t.json" title; }
 
@@ -36,7 +41,29 @@ fi
 [ -x "$BG" ] && [ -x "$AX" ] || { echo "ABORT(91): 先跑 ./build.sh"; exit 91; }
 "$BG" env > "$EV/S0-baseline.json"
 BASE_FRONT=$(jget "$EV/S0-baseline.json" frontmost)
-note "解锁 OK，真实前台 = $BASE_FRONT；caffeinate 已挂在本进程上"
+note "未锁屏，真实前台 = ${BASE_FRONT}；caffeinate 已挂在本进程上"
+
+# ---- 能力预检：直接验证"AX 能不能看见后台 app 的窗口" ----
+# 只查 CGSSessionScreenIsLocked 是不够的：2026-08-31 09:18 那轮就是在"未锁屏但 AX 对
+# 后台 app 一个窗口都不暴露"的状态下跑的，S3–S9 全部产出了假读数。用自己的探针做金丝雀，
+# 直接断言这项能力，失败就停，绝不在无效环境里出结论。
+say "S-0 能力预检（金丝雀探针）"
+rm -f "$LOGS"/BgProbe*.log
+"$BG" launch --path "$OUT/BgProbeA.app" --log-dir "$LOGS" > "$EV/S0-canaryA.json"
+PA=$(jget "$EV/S0-canaryA.json" launchedPID)
+sleep 2.5
+"$BG" windows --pid "${PA}" > "$EV/S0-canary-ax.json"
+CANARY_OK=$(jget "$EV/S0-canary-ax.json" healthy)
+note "金丝雀 pid=${PA} healthy=${CANARY_OK} axWindowsError=$(jget "$EV/S0-canary-ax.json" axWindowsError) 诊断=$(jget "$EV/S0-canary-ax.json" diagnosis)"
+if [ "$CANARY_OK" != "True" ] && [ "$CANARY_OK" != "true" ]; then
+  echo "ABORT(92): AX 看不见后台 app 的窗口，本轮实验全部会产出假读数。"
+  echo "           金丝雀是我自己刚启动的原生 AppKit 探针，它有 CG 窗口但 AXWindows 为空。"
+  echo "           这不是锁屏（未锁屏），也不是本脚本参数问题——是 AX 层的环境状态。"
+  echo "           诊断: $(jget "$EV/S0-canary-ax.json" diagnosis)"
+  kill "${PA}" 2>/dev/null
+  exit 92
+fi
+note "预检通过：AX 能解析后台窗口（resolvedBy=$(jget "$EV/S0-canary-ax.json" resolvedBy)）"
 
 say "S1 启动独立 profile Chrome（先启动 → z 序在探针之下）"
 PROF="$ROOT/chrome-profile"; rm -rf "$PROF"; mkdir -p "$PROF"
@@ -48,7 +75,7 @@ sleep 5
 "$BG" windows --pid "$PC" > "$EV/S1-chrome-windows.json"
 CFRAME=$(jget "$EV/S1-chrome-windows.json" __frame)
 note "Chrome pid=$PC window=$(jget "$EV/S1-chrome-windows.json" windowNumber) frameAX=$CFRAME resolvedBy=$(jget "$EV/S1-chrome-windows.json" resolvedBy)"
-note "启动后前台=$(jget "$EV/S1-launchChrome.json" frontmost)（应仍是 $BASE_FRONT）"
+note "启动后前台=$(jget "$EV/S1-launchChrome.json" frontmost)（应仍是 ${BASE_FRONT}）"
 cefread "$PC" "$EV/S1-cef-tree.json" "首次树"
 
 say "S2【最高优先级】contenteditable 写入 —— 逐一试遍所有手段"
@@ -100,11 +127,11 @@ note "    页面: $(pagestate)"
 note ">>> 判据：页面 EVENTS 里出现 beforeinput/input 才算真写入；只有 CE_TEXT 变了而无事件 = 受控组件会漏状态"
 
 say "S3 启动双窗口探针"
-rm -f "$LOGS"/BgProbe*.log
-"$BG" launch --path "$OUT/BgProbeA.app" --log-dir "$LOGS" > "$EV/S3-launchA.json"
+# ProbeA 已在 S-0 预检时启动（同时充当 L3 的"用户 app"）；这里只补 ProbeB，
+# 且必须晚于 Chrome 启动，才能在 z 序上盖住它（S8 遮挡的前提）
 "$BG" launch --path "$OUT/BgProbeB.app" --log-dir "$LOGS" > "$EV/S3-launchB.json"
-PA=$(jget "$EV/S3-launchA.json" launchedPID); PB=$(jget "$EV/S3-launchB.json" launchedPID)
-sleep 1.5
+PB=$(jget "$EV/S3-launchB.json" launchedPID)
+sleep 2.5
 pwin() { grep -m1 " launched " "$LOGS/$1.log" | sed -n "s/.*$2 win=\([0-9]*\).*/\1/p"; }
 pfrm() { grep -m1 " launched " "$LOGS/$1.log" | sed -n "s/.*$2 win=[0-9]* frameAX=\([0-9,.-]*\).*/\1/p"; }
 PBW0=$(pwin BgProbeB W0); PBF0=$(pfrm BgProbeB W0)
@@ -147,18 +174,36 @@ note ">>> 两行相同 ⇒ L2 激活对 CEF 出树零贡献"
 say "S8【CEF ②】被完全遮挡"
 CX=$(echo "$CFRAME" | cut -d, -f1); CY=$(echo "$CFRAME" | cut -d, -f2)
 CW=$(echo "$CFRAME" | cut -d, -f3);  CH=$(echo "$CFRAME" | cut -d, -f4)
-"$AX" setwin --pid "$PB" --window-index 0 --position "$CX,$CY" --size "$CW,$CH" > "$EV/S8-cover.json"
 MIDX=$(awk -v a="$CX" -v b="$CW" 'BEGIN{printf "%d", a+b/2}')
 MIDY=$(awk -v a="$CY" -v b="$CH" 'BEGIN{printf "%d", a+b/2}')
-"$AX" hittest --x "$MIDX" --y "$MIDY" > "$EV/S8-hittest.json"
-note "hittest($MIDX,$MIDY) -> pid=$(jget "$EV/S8-hittest.json" pid) role=$(jget "$EV/S8-hittest.json" role) [期望 pid=$PB 才算真遮住]"
-cefread "$PC" "$EV/S8-cef-occluded.json" "occluded"
+COVERED=no
+for attempt in 1 2 3; do
+  "$AX" setwin --pid "$PB" --window-index 0 --position "${CX},${CY}" --size "${CW},${CH}" > "$EV/S8-cover.json"
+  note "第 ${attempt} 次摆位: nowFrame=$(jget "$EV/S8-cover.json" nowFrame) err=$(jget "$EV/S8-cover.json" error)$(jget "$EV/S8-cover.json" axError)"
+  sleep 0.6
+  "$AX" hittest --x "$MIDX" --y "$MIDY" > "$EV/S8-hittest.json"
+  HITPID=$(jget "$EV/S8-hittest.json" pid)
+  note "hittest(${MIDX},${MIDY}) -> pid=${HITPID} role=$(jget "$EV/S8-hittest.json" role) [必须等于探针 ${PB}]"
+  if [ "$HITPID" = "$PB" ]; then COVERED=yes; break; fi
+done
+if [ "$COVERED" != "yes" ]; then
+  note "!! 遮挡前提未满足（命中的是 pid=${HITPID}，不是探针 ${PB}）"
+  note "!! S8 结论：未测成。不出「遮挡后树还在/没了」的结论——前提没成立就没有结论。"
+else
+  note "遮挡已确认成立，开始读树"
+  cefread "$PC" "$EV/S8-cef-occluded.json" "occluded"
+fi
 
 say "S9【CEF ③】最小化"
 "$AX" setwin --pid "$PC" --window-index 0 --minimized true > "$EV/S9-minimize.json"
-note "nowMinimized=$(jget "$EV/S9-minimize.json" nowMinimized) setResult=$(jget "$EV/S9-minimize.json" setMinimized)"
+S9ERR=$(jget "$EV/S9-minimize.json" error)
+note "nowMinimized=$(jget "$EV/S9-minimize.json" nowMinimized) setResult=$(jget "$EV/S9-minimize.json" setMinimized) err=${S9ERR}$(jget "$EV/S9-minimize.json" axError)"
+if [ -n "$S9ERR" ] || [ "$(jget "$EV/S9-minimize.json" nowMinimized)" != "True" ]; then
+  note "!! 最小化没做成（前提未满足）→ S9 结论：未测成，不出结论"
+else
 sleep 1
 cefread "$PC" "$EV/S9-cef-minimized.json" "minimized"
+fi
 "$AX" setwin --pid "$PC" --window-index 0 --minimized false > "$EV/S9-restore.json"
 sleep 1.5
 cefread "$PC" "$EV/S9-cef-restored.json" "restored"

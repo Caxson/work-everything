@@ -116,3 +116,47 @@ application element itself. Check for this explicitly — `CFEqual(entry, app)` 
 and stop with a clear error. Without the check, a locked Mac reads as "this app
 has no window" and the caller retries forever against something that cannot
 recover on its own.
+
+## Writing into a composer
+
+Measured on a `contenteditable` built to imitate Feishu's, judged by the events
+the page itself reported rather than by reading the value back:
+
+`AXValue`, `AXFocused`, `AXSelectedTextRange`, `AXSelectedText`, `AXPress` and
+`AXConfirm` all returned success. Not one of them produced a `beforeinput` or
+an `input`. The text was there on read-back and the page never knew — which for
+a controlled editor means the app's own state never updated, and the message
+that looks typed is not typed at all.
+
+What worked: **press to focus, then send keys to the process**. The page
+reported the full sequence — `keydown`, `keypress`, `beforeinput`, `textInput`,
+`input` — with the frontmost application unchanged and the cursor still.
+
+A plain `<input>` accepts `AXValue` normally, so this is what a contenteditable
+is, not a mistake in how it was addressed.
+
+So: reading and clicking go through public accessibility; **writing into a
+composer needs the private path**. It is not a fallback for Feishu, it is the
+only way in. An executor that silently falls back to `setValue` here will
+report success and send nothing.
+
+## Three ways a window disappears without an error
+
+Each one looks like "this app has no window" and each has a different remedy.
+Code that cannot tell them apart will retry forever against one of them.
+
+1. **Locked screen** — `AXWindows` has the right count, every entry is the
+   application element itself (`CFEqual(entry, app)`). Only a person can undo
+   this.
+2. **Cold accessibility client** — a CEF app's first traversal returns a stub,
+   often the menu bar alone at ~300 nodes. Read again, in the same process,
+   polling for a web area.
+3. **Window never reached the screen** — `AXWindows` returns *success* with a
+   count of zero while `CGWindowList(.optionAll)` shows the windows and
+   `.optionOnScreenOnly` shows none. System-wide the on-screen count collapses
+   to single digits. `orderFrontRegardless()` does not fix it; it is the
+   desktop's state, not the app's.
+
+Before trusting any window-addressed run, launch a probe window and assert that
+accessibility can see it. Checking `CGSSessionScreenIsLocked` alone is not
+enough — case 3 happens with the screen unlocked.
