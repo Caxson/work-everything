@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BrowserCdpDriver, DEFAULT_BROWSER_TARGETS, SCROLL_PAGE_PX, flattenCdpTree, type CdpTransport } from '../src/actions/drivers/browserCdp.js';
+import { BrowserCdpDriver, DEFAULT_BROWSER_TARGETS, flattenCdpTree, type CdpTransport } from '../src/actions/drivers/browserCdp.js';
+import { SCROLL_PAGE_PIXELS } from '../src/actions/driver.js';
 import { SnapshotStore } from '../src/actions/snapshot.js';
 import { AutoWait, type Clock } from '../src/actions/wait.js';
 import type { ActionError } from '../src/actions/errors.js';
@@ -148,7 +149,7 @@ describe('driving a page', () => {
     const { driver } = rig(transport);
     const state = await driver.get_app_state({ app: CHROME });
     await driver.scroll({ app: CHROME, element_index: 1, snapshot_id: state.snapshotId, direction: 'down', pages: 2 });
-    expect(transport.sent.at(-1)?.params).toMatchObject({ type: 'mouseWheel', deltaY: SCROLL_PAGE_PX * 2, deltaX: 0 });
+    expect(transport.sent.at(-1)?.params).toMatchObject({ type: 'mouseWheel', deltaY: SCROLL_PAGE_PIXELS * 2, deltaX: 0 });
 
     await driver.drag({ app: CHROME, from_x: 1, from_y: 2, to_x: 3, to_y: 4 });
     expect(transport.sent.slice(-3).map((call) => (call.params as { type: string }).type)).toEqual(['mousePressed', 'mouseMoved', 'mouseReleased']);

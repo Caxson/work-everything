@@ -14,6 +14,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       return send({ id: req.id, ok: true, result: [{ pid: 42, name: 'Feishu', bundleId: 'com.feishu.app' }] });
     case 'tree':
       return send({ id: req.id, ok: true, result: { ...node, children: [{ nodeId: 11, role: 'AXStaticText', value: 'hi' }] } });
+    case 'windows': {
+      if (process.env['FAKE_WINDOWS_LOCKED'] === '1') {
+        // The dispatch gate refuses a lock-sensitive op before the handler
+        // that would have classified it, so even `meta` arrives as an error.
+        return send({
+          id: req.id,
+          ok: false,
+          error: { code: 'SCREEN_LOCKED', message: 'the screen is locked', details: { cgWindows: 2, onScreen: 0 } },
+        });
+      }
+      const list = [{ index: 0, nodeId: 10, role: 'AXWindow', title: 'Send', windowNumber: 7, resolvedBy: 'ax', addressable: true }];
+      return send({ id: req.id, ok: true, result: req.meta === true ? { windows: list, diagnosis: { code: 'OK', addressable: 1 } } : list });
+    }
+    case 'locked':
+      // The dispatch gate refuses a lock-sensitive op before it runs.
+      return send({
+        id: req.id,
+        ok: false,
+        error: { code: 'SCREEN_LOCKED', message: 'the screen is locked', details: { cgWindows: 2, onScreen: 0 } },
+      });
     case 'find':
       // `meta: true` asks for the traversal budget alongside the hits.
       return send({ id: req.id, ok: true, result: req.meta === true ? { nodes: [node], visited: 2, truncated: false } : [node] });
@@ -33,6 +53,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'focus':
     case 'keystroke':
     case 'click':
+    case 'scroll':
     case 'unobserve':
       return send({ id: req.id, ok: true, result: {} });
     case 'malformed':

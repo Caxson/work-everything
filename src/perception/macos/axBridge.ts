@@ -14,14 +14,25 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { Event } from '../../core/events.js';
 import type { Perceiver } from '../base.js';
-import type { AxApp, AxNode, AxNotification, AxOp, AxSelector } from './axProtocol.js';
-import { AxAppSchema, AxNodeSchema, createLineDecoder, decodeMessage, encodeRequest } from './axProtocol.js';
+import type { AxApp, AxNode, AxNotification, AxOp, AxSelector, WindowDiagnosis, WindowReading } from './axProtocol.js';
+import {
+  AxAppSchema,
+  AxNodeSchema,
+  WINDOW_DIAGNOSIS_CODES,
+  WindowDiagnosisDetailsSchema,
+  WindowReadingSchema,
+  createLineDecoder,
+  decodeMessage,
+  encodeRequest,
+} from './axProtocol.js';
 import { z } from 'zod';
 
 export class AxBridgeError extends Error {
   constructor(
     message: string,
     readonly code = 'bridge_error',
+    /** Structured diagnostics the helper attached, when it had any. */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'AxBridgeError';
@@ -42,7 +53,7 @@ export interface AxClickRequest {
   readonly nodeId?: number | undefined;
   readonly x?: number | undefined;
   readonly y?: number | undefined;
-  readonly button?: 'left' | 'right' | 'middle' | undefined;
+  readonly button?: 'left' | 'right' | 'center' | undefined;
   readonly clickCount?: number | undefined;
 }
 
@@ -63,6 +74,26 @@ const AxTreeReadinessSchema = z.object({
   elapsedMs: z.number().int().nonnegative().optional(),
 });
 export type AxTreeReadiness = z.infer<typeof AxTreeReadinessSchema>;
+
+/**
+ * A classified failure, as a diagnosis. Anything else is a real fault and is
+ * left to throw: turning an unknown error into "no window" would hide it.
+ */
+function diagnosisFromError(error: unknown): WindowDiagnosis | undefined {
+  if (!(error instanceof AxBridgeError)) return undefined;
+  if (!(WINDOW_DIAGNOSIS_CODES as readonly string[]).includes(error.code)) return undefined;
+  const details = WindowDiagnosisDetailsSchema.safeParse(error.details);
+  return { code: error.code, message: error.message, ...(details.success ? { details: details.data } : {}) };
+}
+
+export interface AxScrollRequest {
+  readonly pid: number;
+  /** The element to scroll over. Its centre is where the wheel event lands. */
+  readonly nodeId: number;
+  readonly deltaX?: number | undefined;
+  readonly deltaY?: number | undefined;
+  readonly unit?: 'line' | 'pixel' | undefined;
+}
 
 export interface AxAwaitTreeRequest {
   readonly pid: number;
@@ -186,9 +217,28 @@ export class AxBridgeClient {
     await this.request('enableAX', { pid });
   }
 
-  /** Every AXWindow of an app, best first. Empty means the app shows no window. */
-  async windows(pid: number): Promise<readonly AxNode[]> {
-    return z.array(AxNodeSchema).parse(await this.request('windows', { pid }));
+  /**
+   * Every AXWindow of an app, best first, **with the reason when there are
+   * none**.
+   *
+   * Always asked with `meta: true`. The bare form answers an empty array for
+   * four different situations — a locked screen, a desktop that is not
+   * compositing, windows on another space, and an application genuinely closed
+   * to the tray — which are indistinguishable from a count and call for four
+   * different responses. With `meta` the helper classifies instead of throwing,
+   * and the caller branches on `diagnosis.code`.
+   */
+  async windows(pid: number): Promise<WindowReading> {
+    try {
+      return WindowReadingSchema.parse(await this.request('windows', { pid, meta: true }));
+    } catch (error) {
+      // A locked screen is refused by the helper's dispatch gate, before the
+      // handler that would have classified it, so it arrives as a throw even
+      // with `meta`. Normalised here so every caller branches on one shape.
+      const diagnosis = diagnosisFromError(error);
+      if (diagnosis === undefined) throw error;
+      return { windows: [], diagnosis };
+    }
   }
 
   /**
@@ -288,6 +338,19 @@ export class AxBridgeClient {
     await this.request('keystroke', { pid, key, modifiers });
   }
 
+  /**
+   * A scroll wheel event over an element.
+   *
+   * Sign follows CoreGraphics, not intuition: a **positive** `deltaY` scrolls
+   * the content *up* — towards what came before — and a positive `deltaX`
+   * scrolls left. Getting this backwards moves a conversation the wrong way
+   * and looks like the scroll did nothing.
+   */
+  async scroll(request: AxScrollRequest): Promise<void> {
+    const { pid, nodeId, deltaX, deltaY, unit } = request;
+    await this.request('scroll', { pid, nodeId, deltaX: deltaX ?? 0, deltaY: deltaY ?? 0, ...(unit === undefined ? {} : { unit }) });
+  }
+
   async observe(pid: number, notifications: readonly string[], nodeId?: number): Promise<number> {
     const result = await this.request('observe', { pid, notifications, ...(nodeId === undefined ? {} : { nodeId }) });
     return z.object({ subscription: z.number().int() }).parse(result).subscription;
@@ -312,7 +375,7 @@ export class AxBridgeClient {
     }
     const response = decoded.message.response;
     if (response.ok) this.settle(response.id, response.result, undefined);
-    else this.settle(response.id, undefined, new AxBridgeError(response.error.message, response.error.code));
+    else this.settle(response.id, undefined, new AxBridgeError(response.error.message, response.error.code, response.error.details));
   }
 
   private settle(id: number, value: unknown, error: Error | undefined): void {

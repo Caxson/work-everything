@@ -206,6 +206,10 @@ describe('the rest of the vocabulary', () => {
     await rigged.driver.click({ app: APP, element_index: index, snapshot_id: snapshotId, mouse_button: 'r', click_count: 2 });
     await rigged.driver.click({ app: APP, x: 12, y: 34 });
     expect(rigged.ax.callsTo('click')[0]?.args).toMatchObject({ nodeId: 5, button: 'right', clickCount: 2 });
+    // Codex says `middle`; CoreGraphics says `center`, and sending `middle`
+    // is a BAD_REQUEST. The translation happens at the driver boundary.
+    await rigged.driver.click({ app: APP, x: 1, y: 1, mouse_button: 'middle' });
+    expect(rigged.ax.callsTo('click')[2]?.args).toMatchObject({ button: 'center' });
     expect(rigged.ax.callsTo('click')[1]?.args).toMatchObject({ x: 12, y: 34 });
   });
 
@@ -215,13 +219,28 @@ describe('the rest of the vocabulary', () => {
     expect(ax.callsTo('keystroke')[0]?.args).toEqual({ pid: FAKE_APP.pid, key: 'return', modifiers: ['cmd'] });
   });
 
-  it('scrolls with the accessibility action the element exposes, once per page', async () => {
+  it('scrolls with a wheel event over the element, because AX scroll actions do not exist', async () => {
+    // Measured on real AXScrollAreas in Finder and Chrome: the action list is
+    // empty, so AXScrollDownByPage is actionUnsupported and nothing moves.
     const rigged = rig();
     const { snapshotId, index } = await readComposer(rigged);
     await rigged.driver.scroll({ app: APP, element_index: index, snapshot_id: snapshotId, direction: 'd', pages: 2 });
-    expect(rigged.ax.callsTo('press').map((call) => call.args)).toEqual([
-      { nodeId: 5, action: 'AXScrollDownByPage' },
-      { nodeId: 5, action: 'AXScrollDownByPage' },
+    expect(rigged.ax.callsTo('press')).toHaveLength(0);
+    // Negative deltaY scrolls down: CoreGraphics' sign, not intuition.
+    expect(rigged.ax.callsTo('scroll')[0]?.args).toEqual({ pid: FAKE_APP.pid, nodeId: 5, deltaX: 0, deltaY: -1_600, unit: 'pixel' });
+  });
+
+  it('scrolls up, left and right with the signs CoreGraphics uses', async () => {
+    const rigged = rig();
+    const { snapshotId, index } = await readComposer(rigged);
+    const bind = { app: APP, element_index: index, snapshot_id: snapshotId } as const;
+    await rigged.driver.scroll({ ...bind, direction: 'up' });
+    await rigged.driver.scroll({ ...bind, direction: 'left' });
+    await rigged.driver.scroll({ ...bind, direction: 'right' });
+    expect(rigged.ax.callsTo('scroll').map((call) => [call.args['deltaX'], call.args['deltaY']])).toEqual([
+      [0, 800],
+      [800, 0],
+      [-800, 0],
     ]);
   });
 
@@ -250,7 +269,7 @@ describe('the rest of the vocabulary', () => {
     const rigged = rig();
     const { snapshotId, index } = await readComposer(rigged);
     await rigged.driver.scroll({ app: APP, element_index: index, snapshot_id: snapshotId, direction: 'up' });
-    expect(rigged.ax.callsTo('press').map((call) => call.args)).toEqual([{ nodeId: 5, action: 'AXScrollUpByPage' }]);
+    expect(rigged.ax.callsTo('scroll')[0]?.args).toMatchObject({ deltaY: 800 });
   });
 
   it('refuses html rather than pasting the markup as plain text', async () => {

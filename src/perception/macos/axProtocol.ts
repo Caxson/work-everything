@@ -24,6 +24,7 @@ export const AX_OPS = [
   'press',
   'focus',
   'click',
+  'scroll',
   'keystroke',
   /**
    * Focus an element and deliver text to the process as key events. The only
@@ -32,6 +33,7 @@ export const AX_OPS = [
   'focusAndType',
   /** Poll until an app's tree is worth reading. See `axAwait.ts`. */
   'awaitTree',
+  'windowInfo',
   'observe',
   'unobserve',
 ] as const;
@@ -68,6 +70,12 @@ export interface AxNode {
   readonly domClasses?: readonly string[] | undefined;
   /** Present on `find` results, which are flat, in place of `children`. */
   readonly depth?: number | undefined;
+  /** Window results only: the window server's number for this window. */
+  readonly windowNumber?: number | undefined;
+  /** Window results only: which mechanism found it. */
+  readonly resolvedBy?: string | undefined;
+  /** Window results only: whether it can actually be addressed right now. */
+  readonly addressable?: boolean | undefined;
   readonly frame?: AxFrame | undefined;
   readonly children?: readonly AxNode[] | undefined;
 }
@@ -95,6 +103,9 @@ export const AxNodeSchema: z.ZodType<AxNode, z.ZodTypeDef, unknown> = z.lazy(() 
     domId: z.string().optional(),
     domClasses: z.array(z.string()).optional(),
     depth: z.number().int().optional(),
+    windowNumber: z.number().int().optional(),
+    resolvedBy: z.string().optional(),
+    addressable: z.boolean().optional(),
     frame: AxFrameSchema.optional(),
     children: z.array(AxNodeSchema).optional(),
   }),
@@ -122,8 +133,54 @@ export const AxSelectorSchema = z
   .readonly();
 export type AxSelector = z.infer<typeof AxSelectorSchema>;
 
-export const AxErrorSchema = z.object({ code: z.string(), message: z.string() }).readonly();
+/**
+ * `details` is additive structured diagnostics the helper attaches to some
+ * failures — window censuses, mostly. A client that reads only `code` and
+ * `message` is unaffected; one that wants counts does not have to parse prose.
+ */
+export const AxErrorSchema = z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }).readonly();
 export type AxError = z.infer<typeof AxErrorSchema>;
+
+/**
+ * Why an application exposes no window.
+ *
+ * The helper classifies this rather than answering with an empty array,
+ * because the four causes look identical from a count and call for four
+ * different responses — see `windows` in `docs/ax-bridge-protocol.md`. An
+ * unrecognised code is accepted rather than rejected: a new cause the helper
+ * learns to tell apart must not stop this side parsing the answer.
+ */
+export const WINDOW_DIAGNOSIS_CODES = ['OK', 'SCREEN_LOCKED', 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', 'NO_WINDOW'] as const;
+export type WindowDiagnosisCode = (typeof WINDOW_DIAGNOSIS_CODES)[number];
+
+export const WindowDiagnosisDetailsSchema = z
+  .object({
+    /** Windows the window server has for this process, drawn or not. */
+    cgWindows: z.number().int().optional(),
+    /** How many of them are on screen. */
+    onScreen: z.number().int().optional(),
+    /** Ordinary windows on screen across the whole machine. */
+    desktopOnScreen: z.number().int().optional(),
+    /** How many processes own them. One means the desktop is not compositing. */
+    desktopOwnersOnScreen: z.number().int().optional(),
+    /** `desktop` when nothing anywhere is being drawn; `application` when it is just this one. */
+    scope: z.string().optional(),
+  })
+  .passthrough();
+export type WindowDiagnosisDetails = z.infer<typeof WindowDiagnosisDetailsSchema>;
+
+export const WindowDiagnosisSchema = z.object({
+  code: z.string(),
+  message: z.string().optional(),
+  details: WindowDiagnosisDetailsSchema.optional(),
+  /** Present on `OK`: how many of the windows can actually be addressed. */
+  addressable: z.number().int().optional(),
+});
+export type WindowDiagnosis = z.infer<typeof WindowDiagnosisSchema>;
+
+/** What `windows {meta: true}` answers: the windows, and why there are none. */
+export const WindowReadingSchema = z.object({ windows: z.array(AxNodeSchema), diagnosis: WindowDiagnosisSchema });
+export type WindowReading = z.infer<typeof WindowReadingSchema>;
 
 export const AxResponseSchema = z.union([
   z.object({ id: z.number().int(), ok: z.literal(true), result: z.unknown() }),

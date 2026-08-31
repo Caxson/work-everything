@@ -70,11 +70,7 @@ function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[
   const reader = new FeishuReader(client, { bundleId: FEISHU, appPath: '/Applications/Lark.app', selfName: SELF_CHAT, now: () => now });
   const routes = new ChatRouteTable();
   const ledger = new SentLedger();
-  // The host's real lock state must not leak into a unit test.
-  const monitor = feishuHealthMonitor(client, reader, {
-    screenLocked: async () => false,
-    config: { wedgedAfter: options.wedgedAfter ?? 3 },
-  });
+  const monitor = feishuHealthMonitor(client, reader, { config: { wedgedAfter: options.wedgedAfter ?? 3 } });
 
   const snapshots = new SnapshotStore();
   const actions = new ActionRegistry([
@@ -187,13 +183,46 @@ describe('feishu.reply', () => {
   });
 
   it('refuses to synthesize input into a wedged app, and says a human must restart it', async () => {
-    const { executor, log } = rig({ env: { FAKE_NO_WINDOW: '1' }, wedgedAfter: 1 });
+    // A window the helper can address, with no web content in it. That — not
+    // an empty window list — is what a dead accessibility layer looks like.
+    const { executor, log } = rig({ env: { FAKE_NO_WEB_AREA: '1' }, wedgedAfter: 1 });
     // The first read exhausts the monitor's patience.
     await executor.run(FEISHU_REPLY_TOOL, { text: 'first', chat: SELF_CHAT });
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'second', chat: SELF_CHAT });
     expect(result.ok).toBe(false);
     expect(result.error).toContain('wedged');
     expect(result.error).toContain('restart Feishu');
+    expect(inputs(log)).toEqual([]);
+  });
+
+  it('tells a person to unlock the Mac when that is what is wrong, and stops', async () => {
+    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'SCREEN_LOCKED' } });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('unlock');
+    expect(result.error).not.toContain('restart');
+    expect(inputs(log)).toEqual([]);
+  });
+
+  it('does not tell a person to unlock a Mac that is not locked', async () => {
+    // A running screen saver takes accessibility windows away from every
+    // application while the session stays unlocked. Reported as a lock, the
+    // advice would be wrong and the person would go looking for a password.
+    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'DESKTOP_BLANK' } });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('screen saver');
+    expect(result.error).toContain('not locked');
+    expect(result.error).toContain('8 on screen machine-wide across 1 process');
+    expect(inputs(log)).toEqual([]);
+  });
+
+  it('separates the whole desktop being blank from this app not being drawn', async () => {
+    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' } });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('another space');
+    expect(result.error).not.toContain('screen saver');
     expect(inputs(log)).toEqual([]);
   });
 

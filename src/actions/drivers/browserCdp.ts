@@ -16,6 +16,7 @@
  * this line.
  */
 import type { ActionDriver } from '../driver.js';
+import { SCROLL_PAGE_PIXELS } from '../driver.js';
 import { ActionError, toActionError } from '../errors.js';
 import { parseKeySpec } from '../keys.js';
 import type { SnapshotElement, SnapshotStore } from '../snapshot.js';
@@ -66,9 +67,6 @@ export interface BrowserCdpDeps {
   readonly wait: AutoWait;
   readonly clock?: Clock | undefined;
 }
-
-/** How far one `pages` of scrolling moves, in CSS pixels. */
-export const SCROLL_PAGE_PX = 800;
 
 const MODIFIER_BITS: Readonly<Record<string, number>> = { alt: 1, ctrl: 2, cmd: 4, shift: 8, fn: 0 };
 
@@ -182,7 +180,7 @@ export class BrowserCdpDriver implements ActionDriver {
 
   async scroll(args: ScrollArgs): Promise<void> {
     const point = await this.centreOf(this.element(args.app, args.snapshot_id, args.element_index));
-    const distance = SCROLL_PAGE_PX * Math.max(1, args.pages ?? 1);
+    const distance = SCROLL_PAGE_PIXELS * Math.max(1, args.pages ?? 1);
     const direction = canonicalDirection(args.direction);
     const deltaX = direction === 'left' ? -distance : direction === 'right' ? distance : 0;
     const deltaY = direction === 'up' ? -distance : direction === 'down' ? distance : 0;

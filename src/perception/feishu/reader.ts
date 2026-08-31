@@ -23,8 +23,6 @@ import type { ChatSnapshot } from './messages.js';
 import { parseSnapshot } from './messages.js';
 import type { FeishuHealthConfig } from './health.js';
 import { FeishuHealthMonitor } from './health.js';
-import type { ScreenLockProbe } from '../macos/screenLock.js';
-import { isScreenLocked } from '../macos/screenLock.js';
 import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID, ROLE, TREE_MAX_DEPTH, TREE_MAX_NODES } from './selectors.js';
 
 export interface FeishuReaderConfig {
@@ -81,17 +79,22 @@ export class FeishuReader {
  * The health monitor for one bridge/reader pair. Built here so every caller —
  * the perceiver, the sender, `we run`'s preflight and the end-to-end check —
  * asks the same question the same way, and re-resolves the pid every time.
+ *
+ * There is no local screen-lock probe any more. The helper answers with a
+ * classified diagnosis that sees both the session's lock state and the window
+ * server's census, which is strictly more than `ioreg` could tell us and — for
+ * a screen saver running on an unlocked session — the only thing that gets the
+ * answer right.
  */
 export function feishuHealthMonitor(
   client: AxBridgeClient,
   reader: FeishuReader,
-  options: { readonly screenLocked?: ScreenLockProbe; readonly config?: FeishuHealthConfig } = {},
+  options: { readonly config?: FeishuHealthConfig } = {},
 ): FeishuHealthMonitor {
   return new FeishuHealthMonitor({
     pid: () => reader.pid(true),
     windows: (pid) => client.windows(pid),
     webAreas: (pid) => reader.webAreas(pid),
-    screenLocked: options.screenLocked ?? isScreenLocked,
     ...(options.config === undefined ? {} : { config: options.config }),
   });
 }

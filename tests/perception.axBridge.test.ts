@@ -4,12 +4,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AxBridgeClient, AxBridgeError, AxPerceiver, toEvent } from '../src/perception/macos/axBridge.js';
 
 const helper = fileURLToPath(new URL('./fixtures/fakeAx.mjs', import.meta.url));
-const spawnFake = () => spawn(process.execPath, [helper], { stdio: ['pipe', 'pipe', 'pipe'] });
+const spawnFake =
+  (env: NodeJS.ProcessEnv = {}) =>
+  (): ReturnType<typeof spawn> =>
+    spawn(process.execPath, [helper], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env } });
 
 let client: AxBridgeClient | undefined;
 
-const start = (timeoutMs = 2000): AxBridgeClient => {
-  client = new AxBridgeClient({ binaryPath: '/nonexistent/we-ax', requestTimeoutMs: timeoutMs, spawnFn: spawnFake });
+const start = (timeoutMs = 2000, env: NodeJS.ProcessEnv = {}): AxBridgeClient => {
+  client = new AxBridgeClient({ binaryPath: '/nonexistent/we-ax', requestTimeoutMs: timeoutMs, spawnFn: spawnFake(env) });
   client.start();
   return client;
 };
@@ -56,6 +59,39 @@ describe('ax bridge client', () => {
   it('performs a named accessibility action, not only AXPress', async () => {
     const c = start();
     await expect(c.press(10, 'AXScrollDownByPage')).resolves.toBeUndefined();
+  });
+
+  it('always asks for the window diagnosis, and reports it alongside the windows', async () => {
+    const c = start();
+    const reading = await c.windows(42);
+    expect(reading.diagnosis).toEqual({ code: 'OK', addressable: 1 });
+    expect(reading.windows[0]).toMatchObject({ nodeId: 10, windowNumber: 7, resolvedBy: 'ax', addressable: true });
+  });
+
+  it('turns a classified refusal into a diagnosis rather than a throw', async () => {
+    // A locked screen is refused by the helper's dispatch gate, before the
+    // handler that would have classified it — so it arrives as an error even
+    // with `meta`. Callers must still see one shape, with the census intact.
+    const c = start(2000, { FAKE_WINDOWS_LOCKED: '1' });
+    const reading = await c.windows(42);
+    expect(reading.windows).toEqual([]);
+    expect(reading.diagnosis.code).toBe('SCREEN_LOCKED');
+    expect(reading.diagnosis.details).toMatchObject({ cgWindows: 2, onScreen: 0 });
+  });
+
+  it('lets a fault that is not a diagnosis keep throwing', async () => {
+    const c = start();
+    await expect(c.request('boom')).rejects.toThrow(/element went away/);
+  });
+
+  it('carries the structured details the helper attaches to a failure', async () => {
+    const c = start();
+    await expect(c.request('locked')).rejects.toMatchObject({ code: 'SCREEN_LOCKED', details: { cgWindows: 2, onScreen: 0 } });
+  });
+
+  it('scrolls with a wheel event over an element', async () => {
+    const c = start();
+    await expect(c.scroll({ pid: 42, nodeId: 10, deltaY: -800, unit: 'pixel' })).resolves.toBeUndefined();
   });
 
   it('asks for a traversal budget alongside the hits', async () => {

@@ -24,6 +24,7 @@ import { z } from 'zod';
 import type { AxBridgeClient } from '../../perception/macos/axBridge.js';
 import { awaitTree } from '../../perception/macos/axAwait.js';
 import type { ActionDriver } from '../driver.js';
+import { SCROLL_PAGE_PIXELS } from '../driver.js';
 import { ActionError, toActionError } from '../errors.js';
 import type { KeyboardRoute } from '../keyboard.js';
 import { parseKeySpec } from '../keys.js';
@@ -86,12 +87,16 @@ const COMMAND: readonly string[] = ['cmd'];
 
 const ElementReferenceSchema = z.object({ nodeId: z.number().int() });
 
-/** Direction → the accessibility action a scrollable element exposes. */
-const SCROLL_ACTIONS: Readonly<Record<'up' | 'down' | 'left' | 'right', string>> = {
-  up: 'AXScrollUpByPage',
-  down: 'AXScrollDownByPage',
-  left: 'AXScrollLeftByPage',
-  right: 'AXScrollRightByPage',
+/**
+ * Codex's mouse-button names → the helper's. The only difference is the
+ * middle button, which CoreGraphics calls `center`; sending `middle` is a
+ * `BAD_REQUEST`, so the translation happens here rather than in the
+ * vocabulary, which stays as Codex spells it.
+ */
+const BRIDGE_BUTTONS: Readonly<Record<'left' | 'right' | 'middle', 'left' | 'right' | 'center'>> = {
+  left: 'left',
+  right: 'right',
+  middle: 'center',
 };
 
 interface Reading {
@@ -147,7 +152,7 @@ export class MacAxDriver implements ActionDriver {
 
   async click(args: ClickArgs): Promise<void> {
     const app = await this.resolve(args.app);
-    const button = args.mouse_button === undefined ? undefined : canonicalButton(args.mouse_button);
+    const button = args.mouse_button === undefined ? undefined : BRIDGE_BUTTONS[canonicalButton(args.mouse_button)];
     const target =
       args.element_index === undefined
         ? { x: args.x, y: args.y }
@@ -215,14 +220,25 @@ export class MacAxDriver implements ActionDriver {
     this.deps.wait.mark(appKey(app));
   }
 
+  /**
+   * Scroll over an element.
+   *
+   * Not through an accessibility action: measured on real `AXScrollArea`s in
+   * both Finder and Chrome, they advertise an **empty** action list, so
+   * `AXScrollDownByPage` comes back `actionUnsupported` and nothing moves. A
+   * wheel event over the element's centre is the path that works, and the
+   * helper delivers it to the process rather than to whatever is in front.
+   */
   async scroll(args: ScrollArgs): Promise<void> {
     const app = await this.resolve(args.app);
     const element = this.element(app, args.snapshot_id, args.element_index);
-    const action = SCROLL_ACTIONS[canonicalDirection(args.direction)];
-    const pages = Math.max(1, Math.ceil(args.pages ?? 1));
-    for (let page = 0; page < pages; page += 1) {
-      await this.guard('scroll', () => this.deps.client.press(element.handle, action));
-    }
+    const distance = Math.round(SCROLL_PAGE_PIXELS * Math.max(1, args.pages ?? 1));
+    const direction = canonicalDirection(args.direction);
+    // CoreGraphics' sign, not intuition: positive scrolls towards what came
+    // before. Reversed, a conversation scrolls the wrong way and looks stuck.
+    const deltaY = direction === 'up' ? distance : direction === 'down' ? -distance : 0;
+    const deltaX = direction === 'left' ? distance : direction === 'right' ? -distance : 0;
+    await this.guard('scroll', () => this.deps.client.scroll({ pid: app.pid, nodeId: element.handle, deltaX, deltaY, unit: 'pixel' }));
     this.deps.wait.mark(appKey(app));
   }
 
@@ -296,9 +312,14 @@ export class MacAxDriver implements ActionDriver {
    * element is reached the one way it can be: as a window's `AXParent`.
    */
   private async focusedNode(pid: number): Promise<number> {
-    const windows = await this.guard('type_text', () => this.deps.client.windows(pid));
-    const window = windows[0];
-    if (window === undefined) throw new ActionError('DRIVER_ERROR', `process ${pid} exposes no window to reach its focused element through`);
+    const reading = await this.guard('type_text', () => this.deps.client.windows(pid));
+    const window = reading.windows[0];
+    if (window === undefined) {
+      throw new ActionError(
+        'DRIVER_ERROR',
+        `process ${pid} exposes no window to reach its focused element through (${reading.diagnosis.code}: ${reading.diagnosis.message ?? 'no detail'})`,
+      );
+    }
     const application =
       window.role === 'AXApplication' ? window.nodeId : this.reference(await this.guard('type_text', () => this.deps.client.attr(window.nodeId, 'AXParent')), 'AXParent');
     const focused = await this.guard('type_text', () => this.deps.client.attr(application, 'AXFocusedUIElement'));

@@ -175,6 +175,35 @@ function focusAndType(params) {
   return { ok: true, focused: { action: 'AXPress' }, typed: { characters: text.length } };
 }
 
+/**
+ * The window reading. With `meta:true` the helper classifies why there are no
+ * windows instead of answering an empty array — four different causes that
+ * look identical from a count.
+ */
+function windows(request) {
+  const diagnosis = process.env['FAKE_WINDOW_DIAGNOSIS'];
+  if (diagnosis !== undefined) {
+    const details = {
+      SCREEN_LOCKED: undefined,
+      NO_WINDOW: { cgWindows: 0, onScreen: 0, desktopOnScreen: 42, desktopOwnersOnScreen: 12 },
+      DESKTOP_BLANK: { cgWindows: 3, onScreen: 0, desktopOnScreen: 8, desktopOwnersOnScreen: 1, scope: 'desktop' },
+      NOT_DRAWN: { cgWindows: 3, onScreen: 0, desktopOnScreen: 42, desktopOwnersOnScreen: 12, scope: 'application' },
+    }[diagnosis];
+    const code = diagnosis === 'DESKTOP_BLANK' || diagnosis === 'NOT_DRAWN' ? 'AX_SEES_NO_WINDOWS_BUT_CG_DOES' : diagnosis;
+    const body = { code, message: `fake ${diagnosis}`, ...(details === undefined ? {} : { details }) };
+    // A locked screen is refused by the dispatch gate, before the classifying
+    // handler — so it arrives as a throw even with `meta`.
+    if (code === 'SCREEN_LOCKED') return { __error: body };
+    return request.meta === true ? { windows: [], diagnosis: body } : { __error: body };
+  }
+  if (process.env['FAKE_NO_WINDOW'] === '1') {
+    const body = { code: 'NO_WINDOW', message: 'pid 4242 genuinely exposes no window', details: { cgWindows: 0, onScreen: 0 } };
+    return request.meta === true ? { windows: [], diagnosis: body } : { __error: body };
+  }
+  const list = [{ index: 0, nodeId: WINDOW_NODE, role: 'AXWindow', title: '飞书', windowNumber: 7, resolvedBy: 'ax', addressable: true }];
+  return request.meta === true ? { windows: list, diagnosis: { code: 'OK', addressable: 1 } } : list;
+}
+
 /** Readiness, judged the way the helper judges it: by web areas. */
 function awaitTree() {
   const webAreas = process.env['FAKE_NO_WEB_AREA'] === '1' ? 0 : 1;
@@ -227,7 +256,7 @@ function handle(request) {
     case 'enableAX':
       return {};
     case 'windows':
-      return process.env['FAKE_NO_WINDOW'] === '1' ? [] : [{ index: 0, nodeId: WINDOW_NODE, role: 'AXWindow', title: '飞书' }];
+      return windows(request);
     case 'tree':
       return buildTree();
     case 'find': {
@@ -245,6 +274,8 @@ function handle(request) {
       return keystroke(request);
     case 'focusAndType':
       return focusAndType(request);
+    case 'scroll':
+      return { ok: true, plan: { deltaX: request.deltaX ?? 0, deltaY: request.deltaY ?? 0, unit: request.unit ?? 'line' } };
     case 'awaitTree':
       return awaitTree();
     case 'observe':

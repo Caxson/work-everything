@@ -193,7 +193,7 @@ describe('preflight', () => {
       appPath: '/Applications/Lark.app',
       selfName: CHAT,
         });
-    return feishuHealthMonitor(client, reader, { screenLocked: async () => false, config: { wedgedAfter } });
+    return feishuHealthMonitor(client, reader, { config: { wedgedAfter } });
   }
 
   it('passes, and reports the pid, when Feishu is showing a window', async () => {
@@ -215,13 +215,15 @@ describe('preflight', () => {
     try {
       expect(await preflight(config, client, monitorFor(client), false, (line) => lines.push(line))).toEqual([]);
       expect(lines.join(' ')).toContain('tray');
+      expect(lines.join(' ')).not.toContain('wedged');
     } finally {
       await client.stop();
     }
   });
 
   it('refuses to start against a wedged Feishu, because nothing will ever arrive', async () => {
-    const client = bridge({ FAKE_NO_WINDOW: '1' });
+    // A window the helper can address, and no web content in it.
+    const client = bridge({ FAKE_NO_WEB_AREA: '1' });
     const config = parseConfig({ feishu: { allowedChats: [CHAT] } });
     const monitor = monitorFor(client, 1);
     try {

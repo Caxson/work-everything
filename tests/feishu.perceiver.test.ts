@@ -44,9 +44,8 @@ function fakeClient(): AxBridgeClient {
 function healthyMonitor(pid = 4242): FeishuHealthMonitor {
   return new FeishuHealthMonitor({
     pid: async () => pid,
-    windows: async () => [{ nodeId: 1, role: 'AXWindow', title: '飞书' }],
+    windows: async () => ({ windows: [{ nodeId: 1, role: 'AXWindow', title: '飞书' }], diagnosis: { code: 'OK', addressable: 1 } }),
     webAreas: async () => [{ nodeId: 2, role: 'AXWebArea', title: 'messenger-chat' }],
-    screenLocked: async () => false,
   });
 }
 
@@ -245,10 +244,18 @@ describe('the perceiver’s health gate', () => {
   const trayed = (wedgedAfter: number): FeishuHealthMonitor =>
     new FeishuHealthMonitor({
       pid: async () => 4242,
-      windows: async () => [],
+      windows: async () => ({ windows: [], diagnosis: { code: 'NO_WINDOW', message: 'Feishu is closed to the tray' } }),
       webAreas: async () => [],
-      screenLocked: async () => false,
-        config: { wedgedAfter },
+      config: { wedgedAfter },
+    });
+
+  /** A window the helper can address, with no web content in it: the wedge. */
+  const wedged = (wedgedAfter: number): FeishuHealthMonitor =>
+    new FeishuHealthMonitor({
+      pid: async () => 4242,
+      windows: async () => ({ windows: [{ nodeId: 1, role: 'AXWindow', title: '飞书' }], diagnosis: { code: 'OK', addressable: 1 } }),
+      webAreas: async () => [],
+      config: { wedgedAfter },
     });
 
   it('does not read Feishu at all while it has no window', async () => {
@@ -259,7 +266,7 @@ describe('the perceiver’s health gate', () => {
   });
 
   it('ends the stream on a wedged app instead of retrying it forever', async () => {
-    const { perceiver, fatal, warnings } = withMonitor(trayed(1));
+    const { perceiver, fatal, warnings } = withMonitor(wedged(1));
     expect(await collect(perceiver, 300)).toEqual([]);
     expect(fatal).toHaveLength(1);
     expect(fatal[0]?.state).toBe('wedged');
@@ -269,10 +276,9 @@ describe('the perceiver’s health gate', () => {
   it('says a locked screen out loud once, not on every poll', async () => {
     const locked = new FeishuHealthMonitor({
       pid: async () => 4242,
-      windows: async () => [],
+      windows: async () => ({ windows: [], diagnosis: { code: 'SCREEN_LOCKED', message: 'the screen is locked' } }),
       webAreas: async () => [],
-      screenLocked: async () => true,
-      });
+    });
     const { perceiver, warnings, fatal } = withMonitor(locked);
     expect(await collect(perceiver, 200)).toEqual([]);
     expect(warnings.filter((line) => line.includes('screen is locked'))).toHaveLength(1);

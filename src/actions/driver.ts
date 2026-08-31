@@ -27,6 +27,12 @@ import type {
   TypeTextArgs,
 } from './types.js';
 
+/**
+ * How far one `pages` of scrolling moves, in pixels. Shared so a page means
+ * the same distance whichever driver delivers the scroll.
+ */
+export const SCROLL_PAGE_PIXELS = 800;
+
 export interface ActionDriver {
   /** Names the driver in errors and in routing decisions. */
   readonly kind: string;

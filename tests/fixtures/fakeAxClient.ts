@@ -6,9 +6,17 @@
  * only what happened but what did *not* — "no keystroke was sent" is the
  * assertion that matters most in this codebase.
  */
-import type { AxAwaitTreeRequest, AxBridgeClient, AxClickRequest, AxFindBudget, AxFocusAndTypeRequest, AxTreeReadiness } from '../../src/perception/macos/axBridge.js';
+import type {
+  AxAwaitTreeRequest,
+  AxBridgeClient,
+  AxClickRequest,
+  AxFindBudget,
+  AxFocusAndTypeRequest,
+  AxScrollRequest,
+  AxTreeReadiness,
+} from '../../src/perception/macos/axBridge.js';
 import { AxBridgeError } from '../../src/perception/macos/axBridge.js';
-import type { AxApp, AxNode, AxSelector } from '../../src/perception/macos/axProtocol.js';
+import type { AxApp, AxNode, AxSelector, WindowDiagnosis, WindowReading } from '../../src/perception/macos/axProtocol.js';
 
 export interface FakeCall {
   readonly op: string;
@@ -25,6 +33,8 @@ export interface FakeAxOptions {
   readonly webAreas?: () => number;
   /** What `attr` answers, by attribute name. */
   readonly attrs?: Readonly<Record<string, unknown>>;
+  /** The window diagnosis to report. Derived from the tree when omitted. */
+  readonly diagnosis?: WindowDiagnosis;
 }
 
 export interface FakeAx {
@@ -75,9 +85,14 @@ export function fakeAx(options: FakeAxOptions = {}): FakeAx {
       if (webAreas === 0) throw new AxBridgeError('no AXWebArea appeared', 'TREE_NOT_READY');
       return { ready: true, nodes: countAll(tree), webAreas, polls: 1 };
     },
-    windows: async (pid: number): Promise<readonly AxNode[]> => {
+    windows: async (pid: number): Promise<WindowReading> => {
       record('windows', { pid });
-      return roots().map((node) => ({ nodeId: node.nodeId, role: node.role, title: node.title }));
+      const list = roots().map((node) => ({ nodeId: node.nodeId, role: node.role, title: node.title }));
+      const diagnosis = options.diagnosis ?? (list.length === 0 ? { code: 'NO_WINDOW', message: 'no window' } : { code: 'OK', addressable: list.length });
+      return { windows: list, diagnosis };
+    },
+    scroll: async (request: AxScrollRequest): Promise<void> => {
+      record('scroll', { ...request });
     },
     attr: async (nodeId: number, name: string): Promise<unknown> => {
       record('attr', { nodeId, name });
