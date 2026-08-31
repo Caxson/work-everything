@@ -225,11 +225,15 @@ enum WindowResolver {
         let all = cgWindows(pid: pid)
         let onScreen = all.filter { $0.onScreen }
         let desktop = desktopCensus()
+        let saverOnScreen = screenSaverOnScreen()
         var details: [String: JSONValue] = [
             "cgWindows": .int(all.count),
             "onScreen": .int(onScreen.count),
             "desktopOnScreen": .int(desktop.windows),
-            "desktopOwnersOnScreen": .int(desktop.owners)
+            "desktopOwnersOnScreen": .int(desktop.owners),
+            // Always present, on both return paths, so absence of the key is never
+            // ambiguous with a negative answer for a caller branching on it.
+            "screenSaverOnScreen": .bool(saverOnScreen)
         ]
         if let census = census { details["axWindows"] = census.json }
         guard !all.isEmpty, onScreen.isEmpty else {
@@ -241,12 +245,23 @@ enum WindowResolver {
                                details: .object(details))
         }
         details["scope"] = .string(desktop.owners <= 1 ? "desktop" : "application")
-        let cause = desktop.owners <= 1
-            ? "nothing on this machine is on screen except the frontmost application, so the desktop is not "
-                + "compositing — a running screen saver does this with the session still unlocked, and it "
-                + "takes accessibility windows away from every application at once. Only real user activity "
-                + "clears it, and CGSSessionScreenIsLocked stays false throughout"
-            : "this application's windows are on another space or otherwise not being drawn"
+        // The screen saver is now checked rather than guessed at. It used to be offered as
+        // the explanation for `owners <= 1` on the strength of the symptom alone, which is
+        // the same mistake as matching the host process: a plausible cause asserted without
+        // a signal that distinguishes it.
+        let cause: String
+        if saverOnScreen {
+            cause = "a screen saver is on screen and compositing over every application, with the session "
+                + "still unlocked. It takes accessibility windows away from all of them at once. Only real "
+                + "user activity clears it, and CGSSessionScreenIsLocked stays false throughout, so there is "
+                + "no password to go and find"
+        } else if desktop.owners <= 1 {
+            cause = "nothing on this machine is on screen except the frontmost application, so the desktop is "
+                + "not compositing. No screen saver is on screen, so something else is covering it. Only real "
+                + "user activity clears it, and CGSSessionScreenIsLocked stays false throughout"
+        } else {
+            cause = "this application's windows are on another space or otherwise not being drawn"
+        }
         return BridgeError(
             code: "AX_SEES_NO_WINDOWS_BUT_CG_DOES",
             message: "accessibility returns success with no window for pid \(pid), while the window server "
@@ -259,6 +274,69 @@ enum WindowResolver {
     /// Counted at layer 0 — ordinary application windows. The menu bar and the Dock live
     /// at other layers and are on screen even when nothing else is, so counting every
     /// layer makes a desktop that is drawing nothing look busy.
+    /// Whether a screen saver is actually DISPLAYING, as opposed to merely installed.
+    ///
+    /// The host process proves nothing. `legacyScreenSaver` is a long-lived plugin host:
+    /// measured on this machine at nineteen days of uptime, on an unlocked desktop that was
+    /// drawing eight applications normally, owning exactly one window with
+    /// `kCGWindowIsOnscreen = false`. Matching the process name — `pgrep -x` included — is
+    /// therefore a false positive on any Mac where a saver has ever run, and it tells
+    /// somebody using their computer to go wait for a screen saver that is not there.
+    ///
+    /// A saver that is on screen owns a window the window server reports as on screen and
+    /// that covers a display. The area test is not decoration: the Screen Saver settings
+    /// pane renders a live preview through the same process in a small on-screen window,
+    /// and a preview is not a saver taking the display.
+    ///
+    /// Measured directly in the negative — an idle saver reads `false` here. The positive
+    /// half is inferred from how the window server composites a full-screen saver and was
+    /// deliberately not reproduced, because triggering one takes the machine away from
+    /// whoever is using it. It fails safe in both directions: a miss degrades to the
+    /// generic "not being drawn" wording, and a false positive would require a full-screen
+    /// saver window on screen, which is the thing itself.
+    static func screenSaverOnScreen() -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+        else { return false }
+        let displays = activeDisplayBounds()
+        guard !displays.isEmpty else { return false }
+        return list.contains { entry in
+            guard isScreenSaverOwner(entry[kCGWindowOwnerName as String] as? String),
+                  let raw = entry[kCGWindowBounds as String] as? [String: Any] else { return false }
+            let frame = CGRect(x: raw["X"] as? Double ?? 0, y: raw["Y"] as? Double ?? 0,
+                               width: raw["Width"] as? Double ?? 0, height: raw["Height"] as? Double ?? 0)
+            return displays.contains { covers(frame, $0) }
+        }
+    }
+
+    /// A saver goes full screen on the display it is actually on, which is why this
+    /// measures against that display rather than the main one: a saver covering a
+    /// secondary display smaller than the main one would otherwise fall under the
+    /// threshold and go unnamed. Overlap area is used rather than the window's own area so
+    /// that a single oversized window cannot satisfy the test by being large elsewhere.
+    private static func covers(_ frame: CGRect, _ display: CGRect) -> Bool {
+        let overlap = frame.intersection(display)
+        let displayArea = Double(display.width) * Double(display.height)
+        guard !overlap.isNull, displayArea > 0 else { return false }
+        return (Double(overlap.width) * Double(overlap.height)) / displayArea >= coverageFraction
+    }
+
+    private static func activeDisplayBounds() -> [CGRect] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        return ids.prefix(Int(count)).map { CGDisplayBounds($0) }
+    }
+
+    /// A saver covers the display; a settings preview covers a fraction of it. Anything in
+    /// between does not occur, so the exact fraction is not load-bearing.
+    private static let coverageFraction = 0.8
+
+    private static func isScreenSaverOwner(_ name: String?) -> Bool {
+        guard let name = name?.lowercased() else { return false }
+        return name.contains("screensaver") || name.contains("screen saver")
+    }
+
     static func desktopCensus() -> (windows: Int, owners: Int) {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
         else { return (0, 0) }
