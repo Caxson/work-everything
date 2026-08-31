@@ -21,24 +21,23 @@
  * it can see the window server's census, which is not visible from a count
  * here — and this file turns that classification into a state and a sentence.
  *
- * One cause is deliberately **not** distinguished here, and the reason is
- * worth recording so nobody re-adds the broken version. A displaying screen
- * saver takes accessibility windows away from every application the way a
- * lock does, while the session stays unlocked — so it is neither
- * `SCREEN_LOCKED` nor, measured, `scope: "desktop"` (it came back
- * `scope: "application"` with eight processes still drawing). The obvious
- * detector, "is the screen saver process running", is wrong: `legacyScreenSaver`
- * is a long-lived host for saver plugins and lingers after the saver stops —
- * measured at nineteen days old on a machine somebody was actively using, with
- * its single window not on screen. Asking it would tell that person to go wait
- * for a screen saver that is not there.
+ * One cause is worth its own note, because the obvious way to detect it is
+ * wrong. A displaying screen saver takes accessibility windows away from every
+ * application the way a lock does, while the session stays unlocked — so it is
+ * neither `SCREEN_LOCKED` nor, measured, `scope: "desktop"` (it came back
+ * `scope: "application"` with eight processes still drawing). Asking whether
+ * the screen saver *process* is running is a false positive on any Mac where
+ * one has ever run: `legacyScreenSaver` is a long-lived plugin host, measured
+ * at nineteen days of uptime on a desktop somebody was actively using, with
+ * its single window not on screen. A version of this file asked exactly that,
+ * and would have told that person to go wait for a screen saver that was not
+ * there.
  *
- * The signal that does separate the two states is the saver's own window being
- * on screen, which lives in `CGWindowList` — readable by the helper, which
- * already builds the census, and not readable from here without a native
- * binding. So this file consumes a diagnosis and does not invent one. Until
- * the helper reports it, a displaying screen saver reads as `not_drawn`, whose
- * message names it as one of the possibilities rather than asserting it.
+ * What separates the two states is the saver's own window being on screen and
+ * covering the display, which lives in `CGWindowList` — readable by the helper
+ * and not from here without a native binding. So it arrives as
+ * `details.screenSaverOnScreen` and this file consumes it rather than
+ * inventing one.
  *
  * `wedged` stays terminal and stays hard to reach: only an app that has
  * windows the helper can address, and no web content in them, across several
@@ -126,26 +125,57 @@ function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis): FeishuHealth | 
 /**
  * Windows exist and none of them is drawn — but why.
  *
- * `scope: "desktop"` is the helper's inference from `desktopOwnersOnScreen <= 1`:
- * a desktop where only one process has anything on screen genuinely is not
- * compositing. That is a stricter and rarer condition than a screen saver
- * displaying, which was measured at eight owners still drawing — so it does
- * not cover that case and is not stretched to pretend it does.
+ * Evidence first: `screenSaverOnScreen` is a fact about a window the window
+ * server is compositing, and it gets its own answer because the advice is
+ * completely different — wait, and do not go looking for a password.
+ *
+ * `scope: "desktop"` is second, and is the helper's inference from
+ * `desktopOwnersOnScreen <= 1`: a desktop where only one process has anything
+ * on screen genuinely is not compositing. That is stricter and rarer than a
+ * screen saver displaying, which was measured at eight owners still drawing,
+ * so it does not cover that case and is not stretched to pretend it does.
+ *
+ * Worth knowing about the first branch: the helper measured
+ * `screenSaverOnScreen` directly only in the **negative** — an idle saver
+ * reads `false` against a desktop provably drawing eight applications. `true`
+ * has not been observed, because producing it means taking the machine away
+ * from whoever is using it. It fails safe either way: a miss reads as the
+ * general "not being drawn" answer below, and a false positive would need a
+ * full-screen saver window on screen, which is the thing itself.
  */
 function notDrawn(pid: number, diagnosis: WindowDiagnosis): FeishuHealth {
-  if (diagnosis.details?.scope === 'desktop') {
+  const details = diagnosis.details;
+  if (details?.screenSaverOnScreen === true) {
     return {
       state: 'desktop_blank',
       pid,
-      detail: `nothing on this machine is being drawn, so no application exposes a window; wait for whatever is covering the desktop to go away. ${census(diagnosis)}`.trim(),
+      detail:
+        'a screen saver is on screen and compositing over every application, which takes their accessibility windows away exactly the way a lock ' +
+        `does. Wait for it to exit — the session is not locked, so there is no password to go and find. ${census(diagnosis)}`.trim(),
+    };
+  }
+
+  // `false` is a real answer, not a missing one: the helper reports this key
+  // on every census it builds. Ruling the screen saver out is worth saying,
+  // because it is the first thing somebody looking at a blank desktop guesses.
+  const notTheSaver = details?.screenSaverOnScreen === false ? 'No screen saver is on screen, so it is something else.' : '';
+
+  if (details?.scope === 'desktop') {
+    return {
+      state: 'desktop_blank',
+      pid,
+      detail: `nothing on this machine is being drawn, so no application exposes a window. ${notTheSaver} ${census(diagnosis)}`.replace(/\s+/g, ' ').trim(),
     };
   }
   return {
     state: 'not_drawn',
     pid,
-    detail:
-      'Feishu has windows that are not being drawn — another space, minimised, or something covering the desktop such as a screen saver. ' +
-      `The Mac is not locked, so unlocking is not what is needed. ${census(diagnosis)}`.trim(),
+    detail: (
+      'Feishu has windows that are not being drawn — another space, minimised, or something covering the desktop. ' +
+      `The Mac is not locked, so unlocking is not what is needed. ${notTheSaver} ${census(diagnosis)}`
+    )
+      .replace(/\s+/g, ' ')
+      .trim(),
   };
 }
 

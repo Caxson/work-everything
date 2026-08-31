@@ -200,20 +200,22 @@ function windows(request) {
     const details = {
       SCREEN_LOCKED: undefined,
       NO_WINDOW: { cgWindows: 0, onScreen: 0, desktopOnScreen: 42, desktopOwnersOnScreen: 12 },
-      DESKTOP_BLANK: { cgWindows: 3, onScreen: 0, desktopOnScreen: 8, desktopOwnersOnScreen: 1, scope: 'desktop' },
-      // The measured screen-saver payload, verbatim: scope is "application"
-      // and eight processes are still drawing, which is exactly why `scope`
-      // cannot be what identifies a screen saver.
+      DESKTOP_BLANK: { cgWindows: 3, onScreen: 0, desktopOnScreen: 8, desktopOwnersOnScreen: 1, scope: 'desktop', screenSaverOnScreen: false },
+      // The measured payload, verbatim: the saver's host process was running
+      // and its window was not on screen, which is why the answer is `false`
+      // and why matching the process name was a bug.
       NOT_DRAWN: {
         cgWindows: 5,
         onScreen: 0,
         desktopOnScreen: 25,
         desktopOwnersOnScreen: 8,
         scope: 'application',
+        screenSaverOnScreen: false,
         axWindows: { entries: 0, selfEqual: 0, real: 0, nonElement: 0 },
       },
+      SAVER_ON_SCREEN: { cgWindows: 5, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop', screenSaverOnScreen: true },
     }[diagnosis];
-    const code = diagnosis === 'DESKTOP_BLANK' || diagnosis === 'NOT_DRAWN' ? 'AX_SEES_NO_WINDOWS_BUT_CG_DOES' : diagnosis;
+    const code = ['DESKTOP_BLANK', 'NOT_DRAWN', 'SAVER_ON_SCREEN'].includes(diagnosis) ? 'AX_SEES_NO_WINDOWS_BUT_CG_DOES' : diagnosis;
     const body = { code, message: `fake ${diagnosis}`, ...(details === undefined ? {} : { details }) };
     // A locked screen is refused by the dispatch gate, before the classifying
     // handler — so it arrives as a throw even with `meta`.

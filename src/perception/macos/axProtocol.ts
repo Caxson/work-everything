@@ -165,6 +165,13 @@ export const WindowDiagnosisDetailsSchema = z
     desktopOwnersOnScreen: z.number().int().optional(),
     /** `desktop` when nothing anywhere is being drawn; `application` when it is just this one. */
     scope: z.string().optional(),
+    /**
+     * Whether a screen saver is **displaying** — a window of its own, on
+     * screen, covering the display. Present on every diagnosis the helper
+     * builds a census for, so `false` is a real negative and only an absent
+     * key means "this helper does not report it".
+     */
+    screenSaverOnScreen: z.boolean().optional(),
   })
   .passthrough();
 export type WindowDiagnosisDetails = z.infer<typeof WindowDiagnosisDetailsSchema>;

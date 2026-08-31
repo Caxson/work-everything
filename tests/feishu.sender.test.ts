@@ -217,12 +217,11 @@ describe('feishu.reply', () => {
     // A displaying screen saver takes accessibility windows away from every
     // application while the session stays unlocked. Reported as a lock, the
     // advice would be wrong and the person would go looking for a password.
-    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' } });
+    const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'SAVER_ON_SCREEN' } });
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('screen saver');
-    expect(result.error).toContain('not locked');
-    expect(result.error).toContain('25 on screen machine-wide across 8 process');
+    expect(result.error).toContain('screen saver is on screen');
+    expect(result.error).toContain('no password');
     expect(inputs(log)).toEqual([]);
   });
 
@@ -232,13 +231,15 @@ describe('feishu.reply', () => {
     expect(result.error).toContain('nothing on this machine is being drawn');
   });
 
-  it('offers the possibilities instead of asserting the wrong one', async () => {
-    // Nothing on this side can tell a displaying screen saver from a window on
-    // another space, so the message says both and asserts neither.
+  it('rules the screen saver out rather than leaving it hanging', async () => {
+    // The measured reading: the saver's host process is up, its window is not
+    // on screen. Saying so is worth a sentence — it is the first thing anyone
+    // looking at a blank desktop guesses.
     const { executor, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'NOT_DRAWN' } });
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
     expect(result.error).toContain('another space');
-    expect(result.error).toContain('screen saver');
+    expect(result.error).toContain('No screen saver is on screen');
+    expect(result.error).toContain('25 on screen machine-wide across 8 process');
     expect(inputs(log)).toEqual([]);
   });
 

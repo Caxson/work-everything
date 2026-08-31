@@ -13,11 +13,15 @@ const PID = 4242;
 const OK: WindowDiagnosis = { code: 'OK', addressable: 1 };
 
 /**
- * The real answer `windows {meta:true}` gave for pid 730 while
- * `legacyScreenSaver` was running and the session was unlocked. Kept verbatim
- * so the tests are pinned to what the machine did, not to what we expected.
+ * A real answer from `windows {meta:true}`, kept verbatim so these tests are
+ * pinned to what the machine did rather than to what anyone expected.
+ *
+ * Taken while the `legacyScreenSaver` **host process** was running — nineteen
+ * days of uptime — on an unlocked desktop that was drawing eight applications
+ * normally. `screenSaverOnScreen: false` is the correct answer and the whole
+ * point: matching the process name says "yes" here, and "yes" is wrong.
  */
-const SCREEN_SAVER_READING: WindowDiagnosis = {
+const SAVER_IDLE: WindowDiagnosis = {
   code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
   details: {
     cgWindows: 5,
@@ -25,8 +29,21 @@ const SCREEN_SAVER_READING: WindowDiagnosis = {
     desktopOnScreen: 25,
     desktopOwnersOnScreen: 8,
     scope: 'application',
+    screenSaverOnScreen: false,
     axWindows: { entries: 0, selfEqual: 0, real: 0, nonElement: 0 },
   },
+};
+
+/**
+ * A saver actually on screen. Constructed, not captured: producing it means
+ * taking the machine away from whoever is using it, so the helper measured
+ * this signal directly only in the negative. Both sides fail safe — a miss
+ * reads as the general "not being drawn" answer, and a false positive needs a
+ * full-screen saver window on screen, which is the thing itself.
+ */
+const SAVER_ON_SCREEN: WindowDiagnosis = {
+  code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+  details: { cgWindows: 5, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop', screenSaverOnScreen: true },
 };
 
 function reading(overrides: Partial<HealthObservation> = {}): HealthObservation {
@@ -79,35 +96,53 @@ describe('the four reasons an app exposes no window', () => {
     expect(health.detail).not.toContain('restart');
   });
 
-  it('names a screen saver as a possibility without asserting one', () => {
-    // MEASURED. This is the literal payload `windows` returned for pid 730
-    // with the desktop in this state. `scope` is "application" and eight
-    // processes were still drawing, so the desktop-wide rule does not fire —
-    // and there is no signal here that separates a displaying screen saver
-    // from a window on another space. The message says so instead of picking.
-    const health = classifyHealth(reading({ windows: [], diagnosis: SCREEN_SAVER_READING }));
+  it('rules the screen saver out when the helper says it is not on screen', () => {
+    // MEASURED, and the case that caught a real bug: the saver's host process
+    // was running, so "is the process alive" answered yes. The window is not
+    // on screen, so the honest answer is no.
+    const health = classifyHealth(reading({ windows: [], diagnosis: SAVER_IDLE }));
     expect(health.state).toBe('not_drawn');
-    expect(health.detail).toContain('screen saver');
+    expect(health.detail).toContain('No screen saver is on screen');
     expect(health.detail).toContain('not locked');
     expect(health.detail).not.toContain('restart Feishu');
     // The census is the evidence, so it travels with the verdict.
     expect(health.detail).toContain('25 on screen machine-wide across 8 process');
   });
 
-  it('still reports a desktop that is genuinely drawing nothing', () => {
+  it('names a screen saver, and no password, when one is actually on screen', () => {
+    const health = classifyHealth(reading({ windows: [], diagnosis: SAVER_ON_SCREEN }));
+    expect(health.state).toBe('desktop_blank');
+    expect(health.detail).toContain('screen saver is on screen');
+    expect(health.detail).toContain('no password');
+    expect(health.detail).not.toContain('restart Feishu');
+  });
+
+  it('says nothing either way when the helper does not report the saver at all', () => {
+    // An older helper omits the key. `false` is a real negative and absence is
+    // not; conflating them would put a claim in the message that nothing
+    // measured.
+    const health = classifyHealth(
+      reading({ windows: [], diagnosis: { code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', details: { cgWindows: 5, onScreen: 0, scope: 'application' } } }),
+    );
+    expect(health.state).toBe('not_drawn');
+    expect(health.detail).not.toContain('No screen saver is on screen');
+    expect(health.detail).toContain('something covering the desktop');
+  });
+
+  it('reports a desktop drawing nothing, with the saver ruled out', () => {
     const health = classifyHealth(
       reading({
         windows: [],
         diagnosis: {
           code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
           message: 'nothing is compositing',
-          details: { cgWindows: 3, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop' },
+          details: { cgWindows: 3, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop', screenSaverOnScreen: false },
         },
       }),
     );
     expect(health.state).toBe('desktop_blank');
     expect(health.detail).toContain('nothing on this machine is being drawn');
-    expect(health.detail).not.toContain('screen saver');
+    expect(health.detail).toContain('No screen saver is on screen');
   });
 
   it('windows that exist but are not being drawn, with no screen saver behind it', () => {
@@ -195,7 +230,7 @@ describe('the health monitor', () => {
     // own on-screen window, which only the helper can read.
     const made = new FeishuHealthMonitor({
       pid: async () => PID,
-      windows: async () => ({ windows: [], diagnosis: SCREEN_SAVER_READING }),
+      windows: async () => ({ windows: [], diagnosis: SAVER_IDLE }),
       webAreas: async () => [],
     });
     expect((await made.check()).state).toBe('not_drawn');
