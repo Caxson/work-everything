@@ -18,6 +18,14 @@ describe('what is worth trying again', () => {
     }
   });
 
+  it('never retries a failed focus, because repeating it is not free', () => {
+    // The only member of this set that is here for causing harm rather than
+    // for being hopeless: establishing focus ends in a real click, so a retry
+    // loop clicks into the window again on every pass.
+    expect(isRetryable(new ActionError('FOCUS_FAILED', 'no keys were sent'))).toBe(false);
+    expect(TERMINAL_ACTION_CODES.has('FOCUS_FAILED')).toBe(true);
+  });
+
   it('does retry a timeout, a transport fault and an app that is still loading', () => {
     expect(isRetryable(new ActionError('DRIVER_ERROR', 'timed out'))).toBe(true);
     expect(isRetryable(new ActionError('TREE_NOT_READY', 'stub'))).toBe(true);

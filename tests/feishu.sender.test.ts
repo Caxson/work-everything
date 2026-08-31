@@ -180,6 +180,10 @@ describe('feishu.reply', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('no keys were sent');
     expect(result.error).toContain('did not land on the element');
+    // And it says what focusing already did, so nobody reads "no keys" as
+    // "nothing happened" and wraps this in a retry.
+    expect(result.error).toContain('real mouse click at the element centre');
+    expect(result.error).toContain('Not retried');
     // The very first thing done to the composer is the focus, and it refused.
     // Not one key followed it — including the select-all that would otherwise
     // have gone to whatever window was listening.

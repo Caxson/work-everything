@@ -60,7 +60,7 @@ export function bridgeKeyboardRoute(transport: FocusAndTypeTransport): KeyboardR
       // as a success: the cost of being wrong here is keystrokes loose in
       // somebody's window.
       if (result?.focused === false) {
-        throw new ActionError('FOCUS_FAILED', 'the bridge could not put focus on the target element; sent no keystrokes');
+        throw new ActionError('FOCUS_FAILED', sentence('the bridge could not put focus on the target element, so no keys were sent', CLICK_SIDE_EFFECT(undefined)));
       }
     },
   };
@@ -81,5 +81,40 @@ export function unavailableKeyboardRoute(reason: string = MISSING): KeyboardRout
 function translate(error: unknown): ActionError {
   const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   if (code === 'BAD_REQUEST') return new ActionError('HYBRID_ROUTE_UNAVAILABLE', MISSING);
-  return toActionError(error, 'focusAndType');
+  const action = toActionError(error, 'focusAndType');
+  if (action.code !== 'FOCUS_FAILED') return action;
+  return new ActionError('FOCUS_FAILED', sentence(action.message, CLICK_SIDE_EFFECT(action.details)), action.details);
+}
+
+/**
+ * What a failed focus already did.
+ *
+ * The bridge reports `keysSent: 0`, which is true and is read too generously:
+ * the `auto` strategy order is press, then the focused attribute, then a real
+ * mouse click, so a failure means the click has already been posted at the
+ * element's centre. In a chat window that click can land on a message, a link
+ * or a button. Saying only "no keys were sent" invites both a retry loop and
+ * the belief that nothing happened, and neither is true.
+ */
+const CLICK_SIDE_EFFECT = (details: unknown): string => {
+  const attempted = readAttempted(details);
+  if (attempted !== undefined && !attempted.includes('click')) return '';
+  return (
+    'That is not a clean no-op, though: establishing focus already posted a real mouse click at the element centre, ' +
+    'which in a chat window can land on whatever is there. Not retried — repeating it clicks again.'
+  );
+};
+
+/** Joins two sentences without doubling or omitting the punctuation between. */
+function sentence(head: string, tail: string): string {
+  if (tail === '') return head;
+  const trimmed = head.trimEnd();
+  return `${trimmed}${/[.!?]$/.test(trimmed) ? '' : '.'} ${tail}`;
+}
+
+function readAttempted(details: unknown): readonly string[] | undefined {
+  if (typeof details !== 'object' || details === null) return undefined;
+  const attempted = (details as { attempted?: unknown }).attempted;
+  if (!Array.isArray(attempted)) return undefined;
+  return attempted.filter((entry): entry is string => typeof entry === 'string');
 }

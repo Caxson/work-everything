@@ -34,7 +34,10 @@ export const ACTION_ERROR_CODES = [
   'UNSUPPORTED_ACTION',
   /** A driver's transport is not connected. */
   'NOT_CONNECTED',
-  /** Focus did not land, so nothing was typed. */
+  /**
+   * Focus could not be established, so nothing was typed. Not a clean no-op:
+   * establishing focus ends in a real click. Never retried automatically.
+   */
   'FOCUS_FAILED',
   /** Anything the driver reported that is not one of the above. */
   'DRIVER_ERROR',
@@ -59,8 +62,16 @@ export class ActionError extends Error {
 }
 
 /**
- * Codes where doing the same thing again cannot produce a different answer.
- * A caller that retries one of these is burning time against a wall.
+ * Codes that must not be tried again automatically.
+ *
+ * Most are here because repeating them cannot produce a different answer — a
+ * caller that retries one is burning time against a wall. **`FOCUS_FAILED` is
+ * here for the opposite reason: repeating it does damage.** The helper's
+ * `auto` focus order ends in a real mouse click at the element's centre, so by
+ * the time it reports that focus could not be established, a click has already
+ * been posted. `keysSent: 0` is true and is not the whole story. A retry loop
+ * over it clicks again on every pass, into a chat window, which is precisely
+ * the class of stray input this project exists to avoid.
  */
 export const TERMINAL_ACTION_CODES: ReadonlySet<ActionErrorCode> = new Set<ActionErrorCode>([
   'BAD_ARGS',
@@ -73,6 +84,7 @@ export const TERMINAL_ACTION_CODES: ReadonlySet<ActionErrorCode> = new Set<Actio
   'NOT_TRUSTED',
   'HYBRID_ROUTE_UNAVAILABLE',
   'UNSUPPORTED_ACTION',
+  'FOCUS_FAILED',
 ]);
 
 /** Whether trying the same call again could plausibly work. */
