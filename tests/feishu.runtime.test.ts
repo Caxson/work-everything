@@ -13,7 +13,7 @@ import { makeResponder, preflight } from '../src/run/feishuRuntime.js';
 import { AxBridgeClient } from '../src/perception/macos/axBridge.js';
 import { FeishuReader, feishuHealthMonitor } from '../src/perception/feishu/reader.js';
 import { ChatRouteTable } from '../src/perception/feishu/chatRoutes.js';
-import { FEISHU_REPLY_TOOL, type FeishuExecutor } from '../src/execution/feishu/sender.js';
+import { FEISHU_REPLY_TOOL } from '../src/execution/feishu/sender.js';
 import type { Event } from '../src/core/events.js';
 import type { SlowThinker } from '../src/hosts/base.js';
 
@@ -142,7 +142,7 @@ describe('the write-back gate', () => {
     const store = new TrajectoryStore(openDb(':memory:'));
     const lines: string[] = [];
     return {
-      respond: makeResponder({ config, feishu: reply as unknown as FeishuExecutor, routes, store, log: (line) => lines.push(line) }),
+      respond: makeResponder({ config, runner: toolRunner([reply]), routes, store, log: (line) => lines.push(line) }),
       sent: reply.sent,
       lines,
       store,

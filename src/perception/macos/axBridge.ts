@@ -14,12 +14,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { Event } from '../../core/events.js';
 import type { Perceiver } from '../base.js';
-import type { AxApp, AxNode, AxNotification, AxOp, AxSelector, WindowDiagnosis, WindowReading } from './axProtocol.js';
+import type { AxApp, AxEnv, AxNode, AxNotification, AxOp, AxScreenState, AxSelector, WindowDiagnosis, WindowInfo, WindowReading } from './axProtocol.js';
 import {
   AxAppSchema,
+  AxEnvSchema,
   AxNodeSchema,
   WINDOW_DIAGNOSIS_CODES,
   WindowDiagnosisDetailsSchema,
+  WindowInfoSchema,
   WindowReadingSchema,
   createLineDecoder,
   decodeMessage,
@@ -239,6 +241,41 @@ export class AxBridgeClient {
       if (diagnosis === undefined) throw error;
       return { windows: [], diagnosis };
     }
+  }
+
+  /**
+   * The helper's full diagnosis for one application, including whether the
+   * screen is locked.
+   *
+   * This is the op to ask when the answer matters: unlike everything that has
+   * to resolve a window, it is not gated on the screen being unlocked, so it
+   * answers rather than refusing at exactly the moment the answer is wanted.
+   */
+  async windowInfo(pid: number): Promise<WindowInfo> {
+    return WindowInfoSchema.parse(await this.request('windowInfo', { pid }));
+  }
+
+  /** Machine-wide diagnostics. Takes no pid and needs no accessibility grant. */
+  async env(): Promise<AxEnv> {
+    return AxEnvSchema.parse(await this.request('env'));
+  }
+
+  /**
+   * Whether the Mac is locked, as the helper reads it from the login session.
+   *
+   * Asked through `env` rather than `windowInfo` because it must not depend on
+   * any particular application being alive. `windowInfo` needs a pid; a probe
+   * built on it goes dark the moment that app quits, and a screen that unlocked
+   * while it was gone would never be noticed — leaving the queue holding work
+   * forever against a Mac somebody is sitting in front of.
+   *
+   * This is the only lock check on this side of the pipe, deliberately: a
+   * second one built from what accessibility exposes here would be reading the
+   * same session key through a worse lens, and this project has already deleted
+   * one such duplicate (see `perception/feishu/reader.ts`).
+   */
+  async screenState(): Promise<AxScreenState> {
+    return (await this.env()).screen;
   }
 
   /**

@@ -125,6 +125,41 @@ export const ConfigSchema = z
       })
       .strict()
       .default({}),
+    /**
+     * The deferral queue: what happens to an action decided on while the Mac
+     * is locked. The defaults are chosen so a forgotten action dies quietly
+     * rather than surprising somebody an hour later.
+     */
+    queue: z
+      .object({
+        /** Off means a locked screen fails calls where they stand, as before. */
+        enabled: z.boolean().default(true),
+        /** How long a queued action is still the action that was authorized. */
+        ttlMs: z.number().int().positive().default(900_000),
+        /** How long its permission to run unattended survives the wait. */
+        trustResetMs: z.number().int().positive().default(300_000),
+        capacity: z.number().int().positive().default(100),
+        /**
+         * How often the bridge is asked whether the screen is still locked.
+         * Floored at 100ms: this is a round trip to another process, and a
+         * tighter loop buys nothing a person could perceive.
+         */
+        pollIntervalMs: z.number().int().min(100).default(15_000),
+        /** Settled actions kept for `we queue`. At least one, as `settled()` reads. */
+        historyLimit: z.number().int().positive().default(200),
+      })
+      .strict()
+      .refine((queue) => queue.trustResetMs <= queue.ttlMs, {
+        message:
+          'trustResetMs must not exceed ttlMs: a reset window longer than the lifetime can never fire, because anything ' +
+          'old enough to have lost its authorization has already been dropped as expired',
+      })
+      .refine((queue) => queue.pollIntervalMs <= queue.ttlMs, {
+        message:
+          'pollIntervalMs must not exceed ttlMs: the drainer would next look at the queue after everything in it had ' +
+          'already expired, so nothing queued could ever run',
+      })
+      .default({}),
     defaultFailurePolicy: z.enum(FAILURE_POLICIES).default('fail_fast'),
     tools: z.array(ShellToolSchema).default([]),
     /**

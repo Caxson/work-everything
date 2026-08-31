@@ -10,12 +10,18 @@
  * cannot be filled without a model is *not* muscle, whatever the router
  * said. It is demoted to the fast tier and the model call is recorded, so
  * "zero model calls" in the trajectory always means zero.
+ *
+ * The second rule, added with the deferral gate: **a chain that was never
+ * allowed to start did not fail.** When the gate refuses admission — the
+ * screen is locked and the chain needs it — no trust outcome is recorded at
+ * all. Counting that as a failure would demote, and eventually quarantine, a
+ * scenario for the offence of the user having locked their Mac.
  */
 import type { Event } from './core/events.js';
 import { eventText } from './core/events.js';
 import type { Scenario } from './core/scenario.js';
 import { RESERVED_VARS, requiredVars } from './core/scenario.js';
-import type { ChainResult, VarBag } from './core/engine.js';
+import type { VarBag } from './core/engine.js';
 import { executeChain } from './core/engine.js';
 import type { RouteDecision, RouterConfig } from './core/router.js';
 import { route } from './core/router.js';
@@ -30,8 +36,10 @@ import type { SlowThinker } from './hosts/base.js';
 import type { Perceiver } from './perception/base.js';
 import { mergeEvents } from './perception/base.js';
 import type { TrajectoryRecord, TrajectoryStep } from './memory/trajectory.js';
+import { stepsOf } from './memory/trajectory.js';
 import type { TrajectoryStore } from './memory/trajectory.js';
 import type { Registry } from './memory/registry.js';
+import type { ExecutionGate } from './queue/gate.js';
 
 /** Asked before an untrusted chain runs. `false` sends the event to slow thinking. */
 export type ConfirmFn = (request: { readonly event: Event; readonly decision: RouteDecision; readonly chain: Scenario }) => Promise<boolean>;
@@ -63,6 +71,11 @@ export interface DaemonOptions {
   readonly confirm?: ConfirmFn | undefined;
   /** Omitted means slow-tier answers are recorded but delivered nowhere. */
   readonly responder?: ResponderFn | undefined;
+  /**
+   * Consulted before a chain runs. Omitted means nothing is ever deferred and
+   * a locked screen fails calls where they stand, as it did before the queue.
+   */
+  readonly gate?: ExecutionGate | undefined;
 }
 
 export class Daemon {
@@ -211,21 +224,53 @@ export class Daemon {
     }
 
     const vars = this.baseVars(event, slots);
+
+    // Asked after confirmation and before execution, so whatever is queued was
+    // authorized to run at the moment it was queued — which is exactly the
+    // authorization the queue's own reset window later expires.
+    const admission = await this.options.gate?.admit({ traceId: event.traceId, chain, vars });
+    if (admission !== undefined && !admission.admitted) {
+      return {
+        tier: 'deferred',
+        scenarioId: decision.scenarioId,
+        planId: candidate?.planId ?? decision.planId,
+        needsConfirmation,
+        confirmed: needsConfirmation ? true : null,
+        llmCalls,
+        // Deferring is the daemon doing the right thing, so this is not a
+        // failure — and no trust outcome is applied either way.
+        ok: true,
+        reason: `${decision.reason}; ${admission.reason}`,
+        steps: [],
+      };
+    }
+
     const result = await executeChain(chain, { runner: this.options.runner, vars });
-    this.saveTrust(applyOutcome(trust, verdict(needsConfirmation, result.ok)));
-    if (candidate !== undefined) this.remember(recordRun(candidate, result.ok));
+
+    // The lock state is polled, so a Mac can lock between admission and the
+    // first step. A chain that lost its screen mid-run did not misbehave:
+    // it is recorded, and it costs neither trust nor a candidate's record.
+    // It is also not put back — part of it may already have happened, and the
+    // next event will be deferred properly now that the refusal has landed.
+    const lostTheScreen = !result.ok && this.options.gate?.screenIsUnavailable() === true;
+    if (!lostTheScreen) {
+      this.saveTrust(applyOutcome(trust, verdict(needsConfirmation, result.ok)));
+      if (candidate !== undefined) this.remember(recordRun(candidate, result.ok));
+    }
 
     return {
-      tier: decision.tier,
+      tier: lostTheScreen ? `${decision.tier}->screen_lost` : decision.tier,
       scenarioId: decision.scenarioId,
       planId: candidate?.planId ?? decision.planId,
       needsConfirmation,
       confirmed: needsConfirmation ? true : null,
       llmCalls,
       ok: result.ok,
-      reason: decision.reason,
+      reason: lostTheScreen
+        ? `${decision.reason}; the screen locked while this was running, so it is recorded but charged to nobody`
+        : decision.reason,
       error: result.ok ? undefined : `steps failed: ${result.failedTools.join(', ')}`,
-      steps: toSteps(result),
+      steps: stepsOf(result),
     };
   }
 
@@ -335,16 +380,4 @@ function chainAsScenario(candidate: PlanCandidate): Scenario {
 function verdict(confirmed: boolean, ok: boolean): TrustOutcome {
   if (confirmed) return ok ? 'confirmed_success' : 'confirmed_failure';
   return ok ? 'auto_success' : 'auto_failure';
-}
-
-function toSteps(result: ChainResult): readonly TrajectoryStep[] {
-  return result.steps.map((step) => ({
-    entryIndex: step.entryIndex,
-    tool: step.tool,
-    args: step.args,
-    ok: step.result.ok,
-    value: step.result.value,
-    error: step.result.error,
-    durationMs: step.result.durationMs,
-  }));
 }

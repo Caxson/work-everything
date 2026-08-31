@@ -37,6 +37,30 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'find':
       // `meta: true` asks for the traversal budget alongside the hits.
       return send({ id: req.id, ok: true, result: req.meta === true ? { nodes: [node], visited: 2, truncated: false } : [node] });
+    case 'env':
+      // Machine-wide, no pid, not gated on trust: the right place to ask
+      // whether the Mac is locked, and it keeps working when nothing is running.
+      return send({
+        id: req.id,
+        ok: true,
+        result: {
+          trusted: process.env.FAKE_UNTRUSTED !== '1',
+          screen: process.env.FAKE_LOCKED === '1' ? { locked: true, lockedSince: '2026-08-31 10:00:00 +0000' } : { locked: false },
+        },
+      });
+    case 'windowInfo':
+      // The diagnostic op is not gated on the screen being unlocked: it is the
+      // one thing that still answers while a lock is in force.
+      return send({
+        id: req.id,
+        ok: true,
+        result: {
+          pid: req.pid,
+          windows: [],
+          diagnosis: { code: process.env.FAKE_LOCKED === '1' ? 'SCREEN_LOCKED' : 'OK' },
+          screen: process.env.FAKE_LOCKED === '1' ? { locked: true, lockedSince: '2026-08-31 10:00:00 +0000' } : { locked: false },
+        },
+      });
     case 'awaitTree':
       return send({ id: req.id, ok: true, result: { ready: true, nodes: 2, webAreas: 1, truncated: false, polls: 1, elapsedMs: 3 } });
     case 'focusAndType':

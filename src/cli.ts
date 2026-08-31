@@ -12,6 +12,9 @@ import { loadConfig, type Config } from './config.js';
 import { openDb } from './memory/db.js';
 import { TrajectoryStore } from './memory/trajectory.js';
 import { Registry } from './memory/registry.js';
+import { DeferredStore } from './memory/deferred.js';
+import { describeAge, describeChain } from './queue/deferred.js';
+import type { DeferredAction } from './queue/deferred.js';
 import { Daemon } from './daemon.js';
 import { ShellExecutor } from './execution/shell.js';
 import { toolRunner } from './execution/base.js';
@@ -26,6 +29,7 @@ interface Wired {
   readonly config: Config;
   readonly store: TrajectoryStore;
   readonly registry: Registry;
+  readonly queue: DeferredStore;
   readonly daemon: Daemon;
 }
 
@@ -45,7 +49,7 @@ function wire(configPath?: string): Wired {
     promotion: config.promotion,
     planner: config.planner,
   });
-  return { config, store, registry, daemon };
+  return { config, store, registry, queue: new DeferredStore(db), daemon };
 }
 
 const program = new Command();
@@ -140,6 +144,93 @@ program
   });
 
 program
+  .command('queue')
+  .description('actions held because the screen was locked, and the ones that never ran')
+  .option('--discarded', 'show what was dropped instead of what is waiting')
+  .option('-n, --limit <count>', 'how many discarded actions to show', '20')
+  .action((options: { discarded?: boolean; limit: string }) => {
+    const { config, queue } = wire(program.opts<{ config?: string }>().config);
+    const now = Date.now();
+
+    if (options.discarded === true) {
+      const settled = queue.settled(Number.parseInt(options.limit, 10) || 20);
+      if (settled.length === 0) {
+        console.log('nothing has been discarded');
+        return;
+      }
+      console.log(`discarded (${settled.length}), newest first:`);
+      for (const action of settled) {
+        console.log(`  ${action.id}  ${action.status}`);
+        console.log(`    ${action.purpose}`);
+        console.log(`    ${action.detail}`);
+      }
+      return;
+    }
+
+    const pending = queue.pending();
+    console.log(`db: ${config.dbPath}`);
+    if (!config.queue.enabled) {
+      console.log('queue.enabled is false: a locked screen fails actions instead of holding them.');
+      if (pending.length > 0) {
+        console.log(`  ${pending.length} action(s) queued by an earlier run are still here; they will be dropped as they expire, and none will be sent.`);
+      }
+    }
+    if (pending.length === 0) {
+      console.log('nothing is waiting on the screen');
+    } else {
+      console.log(`waiting (${pending.length}/${config.queue.capacity}), in the order they will run:`);
+      for (const action of pending) console.log(describePending(action, now));
+    }
+
+    // Handed back for a person to answer. Listed here because this is the only
+    // place that says how to answer them.
+    const waiting = queue.settled(50).filter((action) => action.status === 'trust_reset');
+    if (waiting.length === 0) return;
+    console.log(`\nwaiting on you (${waiting.length}) — 'we queue-approve <id>' to send, 'we queue-drop <id>' to decline:`);
+    for (const action of waiting) {
+      console.log(`  ${action.id}  ${action.purpose}`);
+      console.log(`    ${action.detail}`);
+    }
+  });
+
+program
+  .command('queue-approve <actionId>')
+  .description('re-authorize an action that waited too long to run unattended, and put it back in the queue')
+  .action((actionId: string) => {
+    const { config, store, queue } = wire(program.opts<{ config?: string }>().config);
+    const action = queue.get(actionId);
+    if (action === undefined) {
+      console.error(`no queued action '${actionId}'`);
+      process.exitCode = 1;
+      return;
+    }
+    if (action.status !== 'trust_reset') {
+      console.error(`'${actionId}' is ${action.status}, not waiting on you; only an action handed back for confirmation can be approved`);
+      process.exitCode = 1;
+      return;
+    }
+    const back = queue.reinstate(action, config.queue, Date.now());
+    store.markConfirmed(`${action.traceId}:pending:${action.id}`, true);
+    console.log(`approved: ${back.purpose}`);
+    console.log(`  back in the queue, authorized from now; it expires in ${Math.round((back.expiresAt - Date.now()) / 1000)}s`);
+  });
+
+program
+  .command('queue-drop <actionId>')
+  .description('decline an action that was handed back for confirmation')
+  .action((actionId: string) => {
+    const { store, queue } = wire(program.opts<{ config?: string }>().config);
+    const action = queue.get(actionId);
+    if (action === undefined) {
+      console.error(`no queued action '${actionId}'`);
+      process.exitCode = 1;
+      return;
+    }
+    store.markConfirmed(`${action.traceId}:pending:${action.id}`, false);
+    console.log(`declined: ${action.purpose}`);
+  });
+
+program
   .command('promote <planId>')
   .description('promote a plan candidate into a scenario (the manual track)')
   .action((planId: string) => {
@@ -176,5 +267,20 @@ program
     });
     console.log(`  now:  tier=${now.tier} — ${now.reason}`);
   });
+
+/**
+ * One waiting action. The two deadlines are shown as remaining time rather than
+ * timestamps, because the question a person has looking at this list is "will
+ * this still go out", not "when was it decided".
+ */
+function describePending(action: DeferredAction, now: number): string {
+  const expiresIn = Math.max(0, Math.round((action.expiresAt - now) / 1000));
+  const authority = now > action.trustResetAt ? 'needs confirming again' : `runs unattended for another ${Math.round((action.trustResetAt - now) / 1000)}s`;
+  return [
+    `  ${action.id}  waiting ${describeAge(action.enqueuedAt, now)}  expires in ${expiresIn}s`,
+    `    ${action.purpose}`,
+    `    ${describeChain(action)}  [premise: ${action.precondition.kind || 'none captured'}]  ${authority}`,
+  ].join('\n');
+}
 
 program.parse();

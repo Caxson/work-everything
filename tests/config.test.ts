@@ -56,6 +56,42 @@ describe('config', () => {
     expect(envOverrides({})).toEqual({});
   });
 
+  it('gives the deferral queue defaults that let a forgotten action die quietly', () => {
+    const config = parseConfig({});
+    expect(config.queue).toEqual({
+      enabled: true,
+      ttlMs: 900_000,
+      trustResetMs: 300_000,
+      capacity: 100,
+      pollIntervalMs: 15_000,
+      historyLimit: 200,
+    });
+  });
+
+  it('refuses a reset window longer than the action lifetime, which could never fire', () => {
+    // Anything old enough to lose its authorization would already have been
+    // dropped as expired, so the trust gate would be unreachable code.
+    expect(() => parseConfig({ queue: { ttlMs: 60_000, trustResetMs: 600_000 } })).toThrow(/trustResetMs must not exceed ttlMs/);
+    expect(parseConfig({ queue: { ttlMs: 60_000, trustResetMs: 60_000 } }).queue.trustResetMs).toBe(60_000);
+  });
+
+  it('rejects queue values that make no sense rather than clamping them silently', () => {
+    expect(() => parseConfig({ queue: { capacity: 0 } })).toThrow(/queue/);
+    expect(() => parseConfig({ queue: { pollIntervalMs: -1 } })).toThrow(/queue/);
+    expect(() => parseConfig({ queue: { pollIntervalMs: 1 } })).toThrow(/queue/);
+    expect(() => parseConfig({ queue: { historyLimit: 0 } })).toThrow(/queue/);
+    expect(() => parseConfig({ queue: { unknownKey: 1 } })).toThrow(/queue/);
+  });
+
+  it('refuses a poll slower than the lifetime it is meant to protect', () => {
+    // The drainer would next look at the queue after everything in it had
+    // already expired: a queue that provably never drains.
+    expect(() => parseConfig({ queue: { ttlMs: 60_000, trustResetMs: 60_000, pollIntervalMs: 3_600_000 } })).toThrow(
+      /pollIntervalMs must not exceed ttlMs/,
+    );
+    expect(parseConfig({ queue: { ttlMs: 60_000, trustResetMs: 60_000, pollIntervalMs: 60_000 } }).queue.pollIntervalMs).toBe(60_000);
+  });
+
   it('validates declared shell tools', () => {
     const config = parseConfig({ tools: [{ name: 'echo', command: '/bin/echo', argv: ['$v'], params: ['v'] }] });
     expect(config.tools[0]).toMatchObject({ name: 'echo', timeoutMs: 30_000, description: '' });

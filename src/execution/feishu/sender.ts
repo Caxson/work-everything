@@ -29,8 +29,10 @@
  * - **The same text is not sent twice inside the dedupe window.**
  */
 import { z } from 'zod';
+import type { Scenario } from '../../core/scenario.js';
 import type { Executor, ToolResult } from '../base.js';
 import { describeError, fail, ok } from '../base.js';
+import { ActionError } from '../../actions/errors.js';
 import type { ActionDriver } from '../../actions/driver.js';
 import type { SnapshotElement, SnapshotStore } from '../../actions/snapshot.js';
 import type { ChatRouteTable } from '../../perception/feishu/chatRoutes.js';
@@ -42,6 +44,26 @@ import { locateOpenChat } from '../../perception/feishu/elements.js';
 import { FEISHU_BUNDLE_ID, SEND_KEY } from '../../perception/feishu/selectors.js';
 
 export const FEISHU_REPLY_TOOL = 'feishu.reply';
+
+/**
+ * The reply, expressed as a one-entry chain.
+ *
+ * A slow-tier answer is not produced by a chain — it is prose a host wrote —
+ * but it still has to pass the same admission gate as everything else that
+ * needs a screen, and the gate speaks chains. Saying the send this way means
+ * there is one deferral path instead of two, and a reply queued behind a lock
+ * is replayed by exactly the code that runs every other queued action.
+ */
+export const FEISHU_REPLY_CHAIN: Scenario = {
+  id: 'feishu.reply',
+  name: 'reply where the event came from',
+  description: 'Send one reply into the conversation that produced an event.',
+  triggers: [],
+  kinds: [],
+  chain: [{ tool: FEISHU_REPLY_TOOL, args: { text: '$text', trace_id: '$trace_id' }, extractTo: '', condition: 'always' }],
+  onFailure: 'fail_fast',
+  origin: 'authored',
+};
 
 /** A line break inside the composer. A bare Enter would send the message. */
 export const NEWLINE_KEY = `shift+${SEND_KEY}`;
@@ -78,6 +100,17 @@ export interface FeishuSenderDeps {
   /** Consulted before any input is synthesized. */
   readonly monitor: FeishuHealthMonitor;
   readonly routes: ChatRouteTable;
+  /**
+   * The durable answer to "which conversation did this event come from".
+   *
+   * `routes` is in-memory and bounded — routing for work in flight — so a
+   * reply that was queued behind a locked screen and survived a restart finds
+   * nothing there. Without this it would fail with "no target", which is both
+   * wrong and misleading: the target is perfectly well known, it is in the
+   * origin event's own trajectory. Optional: a daemon with no trajectory to
+   * consult behaves exactly as before.
+   */
+  readonly recordedChat?: ((traceId: string) => string | undefined) | undefined;
   /** Everything sent is recorded here so the perceiver skips its own echo. */
   readonly ledger: SentLedger;
   readonly config: FeishuSenderConfig;
@@ -112,6 +145,8 @@ interface Reading {
 
 export class FeishuExecutor implements Executor {
   readonly kind = 'feishu';
+  /** Every step of a send addresses a window, and a locked Mac has none. */
+  readonly screenBound = true;
   private lastSent = new Map<string, number>();
 
   constructor(private readonly deps: FeishuSenderDeps) {}
@@ -160,7 +195,15 @@ export class FeishuExecutor implements Executor {
   private async send(target: string, text: string): Promise<ReplyOutcome> {
     // `require` throws on a wedged app; a merely absent window is an ordinary
     // failure of this send, not a reason to keep hammering the accessibility API.
+    //
+    // A locked screen keeps its code rather than being flattened into prose.
+    // Nothing on this path reaches a driver, so the action layer's own error
+    // channel never sees it; what the screen-lock sensor listens to is the
+    // health monitor's verdict, which is the same helper diagnosis one step
+    // earlier. The code is kept anyway, because a caller that has to tell a
+    // locked Mac from a broken one should not be matching sentences.
     const health = await this.deps.monitor.require();
+    if (health.state === 'screen_locked') throw new ActionError('SCREEN_LOCKED', health.detail);
     if (health.state !== 'ok') throw new Error(health.detail);
 
     const before = await this.read();
@@ -256,7 +299,10 @@ export class FeishuExecutor implements Executor {
     const named = explicit?.trim();
     if (named !== undefined && named !== '') return named;
     if (traceId === undefined || traceId === '') return undefined;
-    return this.deps.routes.lookup(traceId)?.chatTitle;
+    const routed = this.deps.routes.lookup(traceId)?.chatTitle;
+    if (routed !== undefined && routed !== '') return routed;
+    const recorded = this.deps.recordedChat?.(traceId);
+    return recorded === undefined || recorded === '' ? undefined : recorded;
   }
 
   private dedupeKey(chat: string, text: string): string {

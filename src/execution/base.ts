@@ -19,8 +19,20 @@ export interface ToolResult {
 export interface Executor {
   /** Identifies the executor in logs and errors. */
   readonly kind: string;
+  /**
+   * Whether this executor's tools need a screen that is actually there.
+   *
+   * Declared rather than inferred, because the difference is invisible from a
+   * tool name and expensive to get wrong in both directions: a screen-bound
+   * tool run behind a locked Mac drives an accessibility tree that has been
+   * substituted out from under it, and a shell tool needlessly deferred is
+   * work that would have completed while nobody was looking. Absent means no.
+   */
+  readonly screenBound?: boolean;
   /** Whether this executor claims the named tool. */
   supports(tool: string): boolean;
+  /** Every tool this executor claims. Optional: not everything can enumerate. */
+  names?(): readonly string[];
   run(tool: string, args: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ToolResult>;
 }
 
@@ -62,6 +74,42 @@ export function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   return 'unknown error';
+}
+
+/**
+ * Run the named tools one at a time, whatever else is happening.
+ *
+ * The daemon's loop and the queue's drain are two async loops over one runner,
+ * and the screen-bound tools reach a single application through a single
+ * composer and a single snapshot of it. Interleaved, one send's Enter can fire
+ * over another's half-typed text, or one send's cleanup can wipe the other's.
+ * Serializing only the screen-bound names leaves shell work — and a chain's
+ * parallel groups of it — running concurrently, which is where concurrency was
+ * actually wanted.
+ */
+export function serializeTools(runner: ToolRunner, tools: ReadonlySet<string>): ToolRunner {
+  let tail: Promise<unknown> = Promise.resolve();
+  return async (tool, args, signal) => {
+    if (!tools.has(tool)) return await runner(tool, args, signal);
+    const mine = tail.then(
+      () => runner(tool, args, signal),
+      () => runner(tool, args, signal),
+    );
+    // The chain never rejects; keep the tail alive either way.
+    tail = mine.catch(() => undefined);
+    return await mine;
+  };
+}
+
+/**
+ * The tools that cannot run while the screen is locked, taken from what the
+ * executors declare about themselves. An executor that says it is screen-bound
+ * but cannot enumerate its tools contributes nothing here rather than being
+ * guessed at — the gate would rather admit a call that then fails honestly than
+ * defer one it cannot name.
+ */
+export function screenBoundTools(executors: readonly Executor[]): ReadonlySet<string> {
+  return new Set(executors.filter((executor) => executor.screenBound === true).flatMap((executor) => [...(executor.names?.() ?? [])]));
 }
 
 /** Tool names an executor set can serve, for scenario validation. */

@@ -43,7 +43,15 @@ afterEach(async () => {
   open = undefined;
 });
 
-function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[]; wedgedAfter?: number; realTime?: boolean } = {}): Rig {
+function rig(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    allowedChats?: readonly string[];
+    wedgedAfter?: number;
+    realTime?: boolean;
+    recordedChat?: (traceId: string) => string | undefined;
+  } = {},
+): Rig {
   const log: LogEntry[] = [];
   const spawnFn = (): ChildProcessWithoutNullStreams => {
     const child = spawn(process.execPath, [helper], {
@@ -89,6 +97,7 @@ function rig(options: { env?: NodeJS.ProcessEnv; allowedChats?: readonly string[
     snapshots,
     reader,
     monitor,
+    ...(options.recordedChat === undefined ? {} : { recordedChat: options.recordedChat }),
     routes,
     ledger,
     config: {
@@ -256,6 +265,42 @@ describe('feishu.reply', () => {
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', trace_id: 'feishu-unknown' });
     expect(result.ok).toBe(false);
     expect(result.error).toContain('has no target');
+  });
+
+  it('finds its conversation in the durable record when routing has been forgotten', async () => {
+    // Exactly the state a reply queued behind a locked screen comes back to:
+    // the process restarted, the in-memory route table is empty, and the only
+    // surviving record of where the event came from is its own trajectory.
+    // Without this the reply fails with "no target", which is both wrong and
+    // misleading — the target is perfectly well known.
+    const { executor, log } = rig({ recordedChat: (traceId) => (traceId === 'feishu-restored' ? SELF_CHAT : undefined) });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'restored reply', trace_id: 'feishu-restored' });
+
+    expect(result.ok).toBe(true);
+    expect(result.value).toMatchObject({ sent: true, chat: SELF_CHAT });
+    expect(inputs(log).length).toBeGreaterThan(0);
+  });
+
+  it('still refuses when neither the routing nor the record knows the conversation', async () => {
+    const { executor } = rig({ recordedChat: () => undefined });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', trace_id: 'feishu-unknown' });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('has no target');
+  });
+
+  it('keeps the SCREEN_LOCKED code on a locked screen, rather than flattening it to prose', async () => {
+    // This check runs before any driver is touched, so it is the only place a
+    // lock is learned on the send path. A plain Error here would leave the
+    // queue's sensor blind and every caller matching sentences.
+    const { executor } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'SCREEN_LOCKED' } });
+    let seen: unknown;
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT }).catch((error: unknown) => {
+      seen = error;
+      return undefined;
+    });
+    expect(seen).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toContain('locked');
   });
 
   it('rejects an empty reply', async () => {

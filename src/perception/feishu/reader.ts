@@ -21,7 +21,7 @@ import { AxBridgeError } from '../macos/axBridge.js';
 import type { AxNode } from '../macos/axProtocol.js';
 import type { ChatSnapshot } from './messages.js';
 import { parseSnapshot } from './messages.js';
-import type { FeishuHealthConfig } from './health.js';
+import type { FeishuHealth, FeishuHealthConfig } from './health.js';
 import { FeishuHealthMonitor } from './health.js';
 import { FEISHU_APP_PATH, FEISHU_BUNDLE_ID, ROLE, TREE_MAX_DEPTH, TREE_MAX_NODES } from './selectors.js';
 
@@ -91,12 +91,13 @@ export class FeishuReader {
 export function feishuHealthMonitor(
   client: AxBridgeClient,
   reader: FeishuReader,
-  options: { readonly config?: FeishuHealthConfig } = {},
+  options: { readonly config?: FeishuHealthConfig; readonly onHealth?: (health: FeishuHealth) => void } = {},
 ): FeishuHealthMonitor {
   return new FeishuHealthMonitor({
     pid: () => reader.pid(true),
     windows: (pid) => client.windows(pid),
     webAreas: (pid) => reader.webAreas(pid),
     ...(options.config === undefined ? {} : { config: options.config }),
+    ...(options.onHealth === undefined ? {} : { onHealth: options.onHealth }),
   });
 }

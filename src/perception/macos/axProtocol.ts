@@ -34,6 +34,8 @@ export const AX_OPS = [
   /** Poll until an app's tree is worth reading. See `axAwait.ts`. */
   'awaitTree',
   'windowInfo',
+  /** Machine-wide diagnostics, including the screen lock. Needs no pid. */
+  'env',
   'observe',
   'unobserve',
 ] as const;
@@ -184,6 +186,36 @@ export const WindowDiagnosisSchema = z.object({
   addressable: z.number().int().optional(),
 });
 export type WindowDiagnosis = z.infer<typeof WindowDiagnosisSchema>;
+
+/**
+ * The helper's answer about the login session's lock state.
+ *
+ * `locked` comes from `CGSSessionScreenIsLocked`, which only the helper can
+ * read. It arrives on `windowInfo` — the diagnostic op, and the one op that
+ * keeps answering while the screen is locked, because withholding the
+ * diagnosis at the moment somebody needs it would be the wrong trade.
+ */
+export const AxScreenStateSchema = z.object({ locked: z.boolean(), lockedSince: z.string().optional() }).passthrough();
+export type AxScreenState = z.infer<typeof AxScreenStateSchema>;
+
+/**
+ * `windowInfo`'s reply. Only `screen` is modelled: the rest is a census this
+ * side has no use for, and `passthrough` keeps a helper that adds fields from
+ * breaking a client that does not read them.
+ */
+export const WindowInfoSchema = z.object({ screen: AxScreenStateSchema }).passthrough();
+export type WindowInfo = z.infer<typeof WindowInfoSchema>;
+
+/**
+ * `env`'s reply. The same `screen` object, from an op that takes no pid and is
+ * not gated on accessibility permission — which is what makes it the right
+ * place to ask whether the Mac is locked. `windowInfo` answers the same
+ * question but only about a *running application*, so a probe built on it stops
+ * working the moment that application quits, and a screen that unlocked while
+ * it was gone would never be noticed.
+ */
+export const AxEnvSchema = z.object({ screen: AxScreenStateSchema }).passthrough();
+export type AxEnv = z.infer<typeof AxEnvSchema>;
 
 /** What `windows {meta: true}` answers: the windows, and why there are none. */
 export const WindowReadingSchema = z.object({ windows: z.array(AxNodeSchema), diagnosis: WindowDiagnosisSchema });

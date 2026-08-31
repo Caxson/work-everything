@@ -149,4 +149,74 @@ describe('performing an action from untyped input', () => {
     }
     expect(calls).toHaveLength(11);
   });
+
+  it('reports every driver failure while it is still a typed code', async () => {
+    // The one place a SCREEN_LOCKED is still a code rather than a sentence:
+    // downstream an executor turns it into a message, and a caller that wanted
+    // to know why would be reduced to matching prose.
+    const seen: string[] = [];
+    const failing: ActionDriver = {
+      ...stubDriver('failing', () => true),
+      press_key: async () => {
+        throw new ActionError('SCREEN_LOCKED', 'the Mac is locked, so no window can be addressed');
+      },
+    };
+    const one = new ActionRegistry([failing], { onError: (error) => seen.push(error.code) });
+
+    await expect(one.press_key({ app: 'com.example', key: 'Return' })).rejects.toThrow(/the Mac is locked/);
+    expect(seen).toEqual(['SCREEN_LOCKED']);
+  });
+
+  it('reports a failure from an action that names no app', async () => {
+    const seen: string[] = [];
+    const failing: ActionDriver = {
+      ...stubDriver('failing', () => true),
+      list_apps: async () => {
+        throw new ActionError('NOT_TRUSTED', 'accessibility permission has not been granted');
+      },
+    };
+    const one = new ActionRegistry([failing], { onError: (error) => seen.push(error.code) });
+
+    await expect(one.list_apps()).rejects.toThrow(/permission/);
+    expect(seen).toEqual(['NOT_TRUSTED']);
+  });
+
+  it('reports the routing failure when no driver claims the app', async () => {
+    const seen: string[] = [];
+    const one = new ActionRegistry([stubDriver('narrow', (app) => app === 'other')], { onError: (error) => seen.push(error.code) });
+
+    await expect(one.type_text({ app: 'com.example', text: 'x' })).rejects.toThrow(/no driver handles/);
+    expect(seen).toEqual(['NO_DRIVER']);
+  });
+
+  it('passes a non-ActionError through untouched, and does not report it', async () => {
+    const seen: string[] = [];
+    const failing: ActionDriver = {
+      ...stubDriver('failing', () => true),
+      type_text: async () => {
+        throw new TypeError('something else entirely');
+      },
+    };
+    const one = new ActionRegistry([failing], { onError: (error) => seen.push(error.code) });
+
+    await expect(one.type_text({ app: 'com.example', text: 'x' })).rejects.toThrow(TypeError);
+    expect(seen).toEqual([]);
+  });
+
+  it('keeps watching after an observer throws: observation must not change what happened', async () => {
+    const failing: ActionDriver = {
+      ...stubDriver('failing', () => true),
+      type_text: async () => {
+        throw new ActionError('SCREEN_LOCKED', 'locked');
+      },
+    };
+    const one = new ActionRegistry([failing], {
+      onError: () => {
+        throw new Error('the observer is broken');
+      },
+    });
+
+    // The original error survives; the observer's does not escape.
+    await expect(one.type_text({ app: 'com.example', text: 'x' })).rejects.toThrow(/locked/);
+  });
 });

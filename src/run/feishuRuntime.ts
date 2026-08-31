@@ -8,17 +8,39 @@
  * Everywhere else the reply is printed for the operator and recorded as a
  * pending confirmation, so nothing the daemon decided to say reaches a person
  * without someone having said it may.
+ *
+ * It is also where the locked-screen policy is assembled, and the assembly is
+ * the policy. There is **one** lock sensor, and every channel into it carries
+ * the helper's own verdict: the `env` poll, every `SCREEN_LOCKED` the action
+ * layer throws (through `ActionRegistry`'s `onError`, while it is still a typed
+ * code), and the health monitor's `screen_locked` (which is that same helper
+ * diagnosis, and is the only one that fires when the sender refuses before
+ * touching a driver). Nothing here reads a lock state for itself.
+ *
+ * What the gate does **not** touch is perception: no perceiver and no reader
+ * passes through it, so a non-GUI source keeps producing events, and every
+ * event that arrives is still routed and recorded while the Mac is locked.
+ * Worth being exact about the limit, though, because it is physical rather
+ * than chosen: Feishu is read *through the screen*, and a locked Mac
+ * substitutes the application element for every window. So this particular
+ * source goes quiet while locked no matter what this file does — the queue
+ * fills from work already in flight and from sources that are not the screen.
  */
 import { openDb } from '../memory/db.js';
 import { TrajectoryStore } from '../memory/trajectory.js';
 import { Registry } from '../memory/registry.js';
+import type { DeferredStore } from '../memory/deferred.js';
 import { Daemon, type ResponderFn } from '../daemon.js';
 import type { Config } from '../config.js';
 import { ShellExecutor } from '../execution/shell.js';
-import { toolRunner } from '../execution/base.js';
-import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../execution/feishu/sender.js';
+import { screenBoundTools, serializeTools, toolRunner, type ToolRunner } from '../execution/base.js';
+import { FeishuExecutor, FEISHU_REPLY_CHAIN, FEISHU_REPLY_TOOL } from '../execution/feishu/sender.js';
+import type { ExecutionGate } from '../queue/gate.js';
+import type { QueueDrainer } from '../queue/drain.js';
+import { createActionQueue } from './queueWiring.js';
 import { AxBridgeClient } from '../perception/macos/axBridge.js';
 import { ActionRegistry } from '../actions/registry.js';
+import type { ActionError } from '../actions/errors.js';
 import { SnapshotStore } from '../actions/snapshot.js';
 import { AutoWait } from '../actions/wait.js';
 import { bridgeKeyboardRoute } from '../actions/keyboard.js';
@@ -29,7 +51,7 @@ import { FeishuReader, feishuHealthMonitor } from '../perception/feishu/reader.j
 import { FeishuPerceiver } from '../perception/feishu/perceiver.js';
 import { ChatRouteTable } from '../perception/feishu/chatRoutes.js';
 import { SentLedger } from '../perception/feishu/sentLedger.js';
-import type { FeishuHealthMonitor } from '../perception/feishu/health.js';
+import type { FeishuHealth, FeishuHealthMonitor } from '../perception/feishu/health.js';
 import { ClaudeCodeHost } from '../hosts/claudeCode.js';
 import { createLightModel, resolveApiKey } from '../llm/openaiCompatible.js';
 import type { Event } from '../core/events.js';
@@ -37,6 +59,9 @@ import type { Event } from '../core/events.js';
 export interface FeishuRuntime {
   readonly daemon: Daemon;
   readonly store: TrajectoryStore;
+  /** What is waiting behind a locked screen, for `we queue` and for tests. */
+  readonly queue: DeferredStore;
+  readonly drainer: QueueDrainer;
   readonly run: (signal: AbortSignal) => Promise<void>;
   readonly stop: () => Promise<void>;
   /** Set when the loop ended because Feishu's accessibility layer is wedged. */
@@ -74,24 +99,38 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   // more specific handling has to be asked before the general one.
   const snapshots = new SnapshotStore();
   const wait = new AutoWait({ settleMs: config.actions.settleMs, maxWaitMs: config.actions.maxWaitMs, pollMs: config.actions.pollMs });
-  const actions = new ActionRegistry([
-    new BrowserCdpDriver({ snapshots, wait, targets: config.actions.browsers }),
-    new MacAxDriver({
-      client,
-      keyboard: bridgeKeyboardRoute(client),
-      snapshots,
-      wait,
-      clipboard: systemClipboard,
-      config: {
-        treeMaxDepth: config.actions.treeMaxDepth,
-        treeMaxNodes: config.actions.treeMaxNodes,
-        treeTimeoutMs: config.actions.treeTimeoutMs,
-        treePollMs: config.actions.treePollMs,
-      },
-    }),
-  ]);
 
-  const monitor = feishuHealthMonitor(client, reader);
+  // Filled in once the queue exists: the drivers and the health monitor are
+  // built before it, and the queue needs the executors built on top of them.
+  let noteActionError: (error: ActionError) => void = () => undefined;
+  let noteHealth: (health: FeishuHealth) => void = () => undefined;
+
+  const actions = new ActionRegistry(
+    [
+      new BrowserCdpDriver({ snapshots, wait, targets: config.actions.browsers }),
+      new MacAxDriver({
+        client,
+        keyboard: bridgeKeyboardRoute(client),
+        snapshots,
+        wait,
+        clipboard: systemClipboard,
+        config: {
+          treeMaxDepth: config.actions.treeMaxDepth,
+          treeMaxNodes: config.actions.treeMaxNodes,
+          treeTimeoutMs: config.actions.treeTimeoutMs,
+          treePollMs: config.actions.treePollMs,
+        },
+      }),
+    ],
+    { onError: (error) => noteActionError(error) },
+  );
+
+  // The sender consults health *before* it touches a driver, so a locked
+  // screen found there never reaches the action layer's error channel. This is
+  // the same helper diagnosis either way — `health.ts` turns the bridge's
+  // `SCREEN_LOCKED` into a state — so listening here adds a channel, not a
+  // second source.
+  const monitor = feishuHealthMonitor(client, reader, { onHealth: (health) => noteHealth(health) });
   let fatal: string | undefined;
   const perceiver = new FeishuPerceiver({
     client,
@@ -118,6 +157,12 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
     reader,
     monitor,
     routes,
+    // The durable half of "which conversation did this come from", for a reply
+    // restored from the queue after a restart, when `routes` is empty.
+    recordedChat: (traceId) => {
+      const chat = store.get(traceId)?.payload['chat'];
+      return typeof chat === 'string' && chat !== '' ? chat : undefined;
+    },
     ledger,
     config: {
       app: config.feishu.bundleId,
@@ -130,6 +175,32 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   });
 
   const shell = new ShellExecutor(config.tools);
+  const executors = [feishu, shell];
+  // Screen-bound tools run one at a time: the daemon's loop and the queue's
+  // drain are two async loops over this one runner, and they reach Feishu
+  // through a single composer.
+  const runner = serializeTools(toolRunner(executors), screenBoundTools(executors));
+
+  // One sensor over two channels, both the helper's own verdict: the
+  // `windowInfo` poll, which keeps answering while locked, and every
+  // SCREEN_LOCKED the drivers throw. Nothing here reads a lock state itself.
+  const { queue, gate, drainer, noteActionError: note, noteHealth: notedHealth } = createActionQueue({
+    db,
+    store,
+    runner,
+    executors,
+    routes,
+    config,
+    screen: () => client.screenState(),
+    openConversation: async () => {
+      const snapshot = await reader.snapshot();
+      return { title: snapshot.chatTitle, messageIds: snapshot.messages.map((message) => message.id) };
+    },
+    log,
+  });
+  noteActionError = note;
+  noteHealth = notedHealth;
+
   const host = new ClaudeCodeHost({
     command: config.host.command,
     args: config.host.args,
@@ -153,7 +224,7 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   const daemon = new Daemon({
     store,
     registry,
-    runner: toolRunner([feishu, shell]),
+    runner,
     tools: [REPLY_TOOL_SCHEMA, ...config.tools.map((tool) => ({ name: tool.name, description: tool.description, params: tool.params }))],
     router: config.router,
     trust: config.trust,
@@ -162,14 +233,22 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
     perceivers: [perceiver],
     ...(lightModel === undefined ? {} : { lightModel }),
     host,
-    responder: makeResponder({ config, feishu, routes, store, log }),
+    gate,
+    responder: makeResponder({ config, runner, gate, routes, store, log }),
   });
 
   return {
     daemon,
     store,
+    queue,
+    drainer,
     fatal: () => fatal,
-    run: (signal) => daemon.run(signal),
+    // Both loops run for the life of the signal. The drainer is not a
+    // perceiver and must not be one: it produces no events, it releases work
+    // the daemon has already decided on.
+    run: async (signal) => {
+      await Promise.all([daemon.run(signal), drainer.run(signal)]);
+    },
     stop: async () => {
       await perceiver.close();
       await client.stop();
@@ -180,7 +259,10 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
 
 interface ResponderDeps {
   readonly config: Config;
-  readonly feishu: FeishuExecutor;
+  /** The composed executors. The reply goes out the same door chains use. */
+  readonly runner: ToolRunner;
+  /** Omitted means a locked screen fails the send rather than queueing it. */
+  readonly gate?: ExecutionGate | undefined;
   readonly routes: ChatRouteTable;
   readonly store: TrajectoryStore;
   readonly log: LogFn;
@@ -203,7 +285,16 @@ export function makeResponder(deps: ResponderDeps): ResponderFn {
       return;
     }
 
-    const result = await deps.feishu.run(FEISHU_REPLY_TOOL, { text, trace_id: event.traceId });
+    // The same admission gate every chain passes: a reply decided on behind a
+    // locked screen is queued, not attempted and not silently dropped.
+    const vars = { text, trace_id: event.traceId };
+    const admission = await deps.gate?.admit({ traceId: event.traceId, chain: FEISHU_REPLY_CHAIN, vars });
+    if (admission !== undefined && !admission.admitted) {
+      deps.log(`[reply] not sent to '${chat}' yet: ${admission.reason}`);
+      return;
+    }
+
+    const result = await deps.runner(FEISHU_REPLY_TOOL, vars);
     if (result.ok) deps.log(`[reply] sent to '${chat}' (${result.durationMs}ms)`);
     else deps.log(`[reply] failed for '${chat}': ${result.error ?? 'unknown error'}`);
   };

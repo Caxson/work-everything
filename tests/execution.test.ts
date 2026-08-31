@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { availableTools, describeError, fail, ok, toolRunner } from '../src/execution/base.js';
-import type { Executor } from '../src/execution/base.js';
+import { availableTools, describeError, fail, ok, screenBoundTools, serializeTools, toolRunner } from '../src/execution/base.js';
+import type { Executor, ToolRunner } from '../src/execution/base.js';
 import { ShellExecutor } from '../src/execution/shell.js';
 
 const stub = (kind: string, names: readonly string[], impl: () => Promise<never> | ReturnType<typeof ok>): Executor => ({
@@ -85,5 +85,90 @@ describe('shell executor', () => {
 
   it('rejects an unknown tool name', async () => {
     expect(await executor.run('nope', {})).toMatchObject({ ok: false, error: expect.stringContaining('unknown shell tool') });
+  });
+});
+
+describe('which tools need a screen', () => {
+  const named = (kind: string, tools: readonly string[], screenBound?: boolean): Executor => ({
+    kind,
+    ...(screenBound === undefined ? {} : { screenBound }),
+    supports: (tool) => tools.includes(tool),
+    names: () => tools,
+    run: async () => ok('', 0),
+  });
+
+  it('takes the set from what each executor declares about itself', () => {
+    const tools = screenBoundTools([named('feishu', ['feishu.reply'], true), named('shell', ['build', 'test'])]);
+    expect([...tools].sort()).toEqual(['feishu.reply']);
+  });
+
+  it('treats an undeclared executor as not screen-bound, rather than guessing', () => {
+    expect(screenBoundTools([named('shell', ['build'])]).size).toBe(0);
+    expect(screenBoundTools([named('shell', ['build'], false)]).size).toBe(0);
+  });
+
+  it('contributes nothing for a screen-bound executor that cannot name its tools', () => {
+    // Better to admit a call that then fails honestly than to defer one the
+    // gate cannot identify.
+    const anonymous: Executor = { kind: 'mystery', screenBound: true, supports: () => true, run: async () => ok('', 0) };
+    expect(screenBoundTools([anonymous]).size).toBe(0);
+  });
+
+  it('is empty for no executors at all', () => {
+    expect(screenBoundTools([]).size).toBe(0);
+  });
+});
+
+describe('serializing the tools that share one screen', () => {
+  /** Records overlap: the highest number of calls in flight at once. */
+  function overlapping(): { runner: ToolRunner; peak: () => number } {
+    let inFlight = 0;
+    let peak = 0;
+    const runner: ToolRunner = async (tool) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return ok(`ran ${tool}`, 1);
+    };
+    return { runner, peak: () => peak };
+  }
+
+  it('never lets two screen-bound calls overlap', async () => {
+    const inner = overlapping();
+    const runner = serializeTools(inner.runner, new Set(['feishu.reply']));
+    await Promise.all([runner('feishu.reply', { text: 'one' }), runner('feishu.reply', { text: 'two' })]);
+    // Unserialized, both would be in flight together and this would be 2 —
+    // two sends interleaving over one composer.
+    expect(inner.peak()).toBe(1);
+  });
+
+  it('leaves everything else running concurrently, which is where it was wanted', async () => {
+    const inner = overlapping();
+    const runner = serializeTools(inner.runner, new Set(['feishu.reply']));
+    await Promise.all([runner('build', {}), runner('test', {})]);
+    expect(inner.peak()).toBe(2);
+  });
+
+  it('keeps the queue moving after a call rejects', async () => {
+    let calls = 0;
+    const runner = serializeTools(async (tool) => {
+      calls += 1;
+      if (calls === 1) throw new Error('first one exploded');
+      return ok(`ran ${tool}`, 1);
+    }, new Set(['feishu.reply']));
+
+    await expect(runner('feishu.reply', {})).rejects.toThrow(/exploded/);
+    await expect(runner('feishu.reply', {})).resolves.toMatchObject({ ok: true });
+  });
+
+  it('returns each call its own result, in order', async () => {
+    const runner = serializeTools(async (_tool, args) => ok(args['n'], 1), new Set(['feishu.reply']));
+    const results = await Promise.all([
+      runner('feishu.reply', { n: '1' }),
+      runner('feishu.reply', { n: '2' }),
+      runner('feishu.reply', { n: '3' }),
+    ]);
+    expect(results.map((result) => result.value)).toEqual(['1', '2', '3']);
   });
 });

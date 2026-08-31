@@ -221,6 +221,37 @@ describe('the health monitor', () => {
     expect((await made.check()).pid).toBe(102);
   });
 
+  it('reports every verdict to whoever is listening, and survives a listener that throws', async () => {
+    // The screen-lock sensor listens here, because the sender consults health
+    // before it touches a driver: a lock found that way never reaches the
+    // action layer's own error channel, so this is the only place it surfaces.
+    const seen: string[] = [];
+    const made = new FeishuHealthMonitor({
+      pid: async () => PID,
+      windows: async () => healthy,
+      webAreas: async () => [webArea],
+      onHealth: (health) => {
+        seen.push(health.state);
+        throw new Error('the listener is broken');
+      },
+    });
+
+    expect((await made.check()).state).toBe('ok');
+    expect(seen).toEqual(['ok']);
+  });
+
+  it('reports a locked screen through the same channel', async () => {
+    const seen: string[] = [];
+    const made = new FeishuHealthMonitor({
+      pid: async () => PID,
+      windows: async () => ({ windows: [], diagnosis: { code: 'SCREEN_LOCKED' } }),
+      webAreas: async () => [],
+      onHealth: (health) => seen.push(health.state),
+    });
+    expect((await made.check()).state).toBe('screen_locked');
+    expect(seen).toEqual(['screen_locked']);
+  });
+
   it('spawns nothing to reach a verdict', async () => {
     // There was a `pgrep` here for "is a screen saver running". It was a live
     // false positive: `legacyScreenSaver` is a long-lived host that lingers

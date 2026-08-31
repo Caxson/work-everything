@@ -230,6 +230,13 @@ export function classifyHealth(observation: HealthObservation, config: FeishuHea
 
 /** What the monitor needs from the outside world. All injectable. */
 export interface FeishuHealthDeps {
+  /**
+   * Sees every verdict. The screen-lock sensor listens here, because this is
+   * where the helper's `SCREEN_LOCKED` diagnosis is turned into a state — and
+   * the sender consults health *before* it touches a driver, so a lock found
+   * this way never reaches the action layer's own error channel.
+   */
+  readonly onHealth?: (health: FeishuHealth) => void;
   /** Re-resolved on every check: a restart of Feishu changes its pid, and a
    *  cached one turns every later call into the same permanent failure. */
   readonly pid: () => Promise<number>;
@@ -277,12 +284,23 @@ export class FeishuHealthMonitor {
       this.config,
     );
 
+    this.report(health);
     if (health.state === 'ok') {
       this.failures = 0;
       return health;
     }
     this.failures += 1;
     return health;
+  }
+
+  /** Observation only: a listener that throws must not change the verdict. */
+  private report(health: FeishuHealth): void {
+    if (this.deps.onHealth === undefined) return;
+    try {
+      this.deps.onHealth(health);
+    } catch {
+      // Intentionally swallowed.
+    }
   }
 
   /** Throwing form, for the paths that must not continue on a wedged app. */

@@ -152,6 +152,27 @@ describe('ax bridge client', () => {
     await expect(pending).rejects.toBeInstanceOf(AxBridgeError);
   });
 
+  it('reads the lock state without naming an application', async () => {
+    // Ops that resolve a window are refused while locked (covered above). The
+    // lock poll goes through `env`, which takes no pid — so it keeps answering
+    // when the watched app has quit, and a screen that unlocks while it is gone
+    // is still noticed.
+    const c = start(2000, { FAKE_LOCKED: '1' });
+    expect(await c.screenState()).toEqual({ locked: true, lockedSince: '2026-08-31 10:00:00 +0000' });
+    expect((await c.env()).screen.locked).toBe(true);
+  });
+
+  it('reports an unlocked screen without inventing a lock time', async () => {
+    expect(await start().screenState()).toEqual({ locked: false });
+  });
+
+  it('still answers windowInfo per application, for a diagnosis of one app', async () => {
+    const c = start(2000, { FAKE_LOCKED: '1' });
+    const info = await c.windowInfo(42);
+    expect(info.screen.locked).toBe(true);
+    expect(info.diagnosis).toEqual({ code: 'SCREEN_LOCKED' });
+  });
+
   it('is safe to stop twice', async () => {
     const c = start();
     await c.stop();

@@ -9,6 +9,7 @@
  */
 import type { Db } from './db.js';
 import { toBool, toInt } from './db.js';
+import type { ChainResult } from '../core/engine.js';
 
 export interface TrajectoryStep {
   readonly entryIndex: number;
@@ -189,6 +190,24 @@ export class TrajectoryStore {
       .all(Math.max(1, limit)) as TrajectoryRow[];
     return rows.map((row) => toRecord(row, []));
   }
+}
+
+/**
+ * A chain's steps as the trajectory records them. Here rather than beside
+ * either caller because two of them now exist — the daemon's own run and the
+ * queue's delayed one — and a step recorded two slightly different ways would
+ * make the two indistinguishable in the table that is supposed to compare them.
+ */
+export function stepsOf(result: ChainResult): readonly TrajectoryStep[] {
+  return result.steps.map((step) => ({
+    entryIndex: step.entryIndex,
+    tool: step.tool,
+    args: step.args,
+    ok: step.result.ok,
+    value: step.result.value,
+    error: step.result.error,
+    durationMs: step.result.durationMs,
+  }));
 }
 
 function toRecord(row: TrajectoryRow, steps: readonly StepRow[]): TrajectoryRecord {

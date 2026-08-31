@@ -9,6 +9,13 @@
  * This is also where raw arguments are validated. `perform` is the door for
  * anything holding untyped input, and it opens onto the same typed methods
  * the rest of the codebase calls directly.
+ *
+ * It is also the only place every driver failure passes through while it is
+ * still a typed `ActionError`, which is why `onError` exists. Downstream, an
+ * executor turns it into a message string, and a caller that wanted to know
+ * *why* — `SCREEN_LOCKED` in particular — would be reduced to matching prose.
+ * The observer sees the code. It cannot change what happens: the error is
+ * rethrown either way, and an observer that throws is ignored.
  */
 import type { ActionDriver } from './driver.js';
 import { ActionError } from './errors.js';
@@ -37,10 +44,18 @@ export interface ActionOutcome {
   readonly value: unknown;
 }
 
+export interface ActionRegistryDeps {
+  /** Sees every `ActionError` a driver throws. Observation only. */
+  readonly onError?: (error: ActionError) => void;
+}
+
 export class ActionRegistry implements ActionDriver {
   readonly kind = 'registry';
 
-  constructor(private readonly drivers: readonly ActionDriver[]) {}
+  constructor(
+    private readonly drivers: readonly ActionDriver[],
+    private readonly deps: ActionRegistryDeps = {},
+  ) {}
 
   supports(app: string): boolean {
     return this.drivers.some((driver) => driver.supports(app));
@@ -95,56 +110,80 @@ export class ActionRegistry implements ActionDriver {
   // --- the vocabulary, routed --------------------------------------------
 
   click(args: ClickArgs): Promise<void> {
-    return this.route(args.app).click(args);
+    return this.via(args.app, (driver) => driver.click(args));
   }
 
   drag(args: DragArgs): Promise<void> {
-    return this.route(args.app).drag(args);
+    return this.via(args.app, (driver) => driver.drag(args));
   }
 
   get_app_state(args: GetAppStateArgs): Promise<AppState> {
-    return this.route(args.app).get_app_state(args);
+    return this.via(args.app, (driver) => driver.get_app_state(args));
   }
 
   /** Every driver's apps, deduplicated by identifier, drivers in order. */
   async list_apps(): Promise<readonly App[]> {
-    const seen = new Set<string>();
-    const apps: App[] = [];
-    for (const driver of this.drivers) {
-      for (const app of await driver.list_apps()) {
-        if (seen.has(app.id)) continue;
-        seen.add(app.id);
-        apps.push(app);
+    return await this.observed(async () => {
+      const seen = new Set<string>();
+      const apps: App[] = [];
+      for (const driver of this.drivers) {
+        for (const app of await driver.list_apps()) {
+          if (seen.has(app.id)) continue;
+          seen.add(app.id);
+          apps.push(app);
+        }
       }
-    }
-    return apps;
+      return apps;
+    });
   }
 
   paste(args: PasteArgs): Promise<void> {
-    return this.route(args.app).paste(args);
+    return this.via(args.app, (driver) => driver.paste(args));
   }
 
   perform_secondary_action(args: PerformSecondaryActionArgs): Promise<void> {
-    return this.route(args.app).perform_secondary_action(args);
+    return this.via(args.app, (driver) => driver.perform_secondary_action(args));
   }
 
   press_key(args: PressKeyArgs): Promise<void> {
-    return this.route(args.app).press_key(args);
+    return this.via(args.app, (driver) => driver.press_key(args));
   }
 
   scroll(args: ScrollArgs): Promise<void> {
-    return this.route(args.app).scroll(args);
+    return this.via(args.app, (driver) => driver.scroll(args));
   }
 
   select_text(args: SelectTextArgs): Promise<void> {
-    return this.route(args.app).select_text(args);
+    return this.via(args.app, (driver) => driver.select_text(args));
   }
 
   set_value(args: SetValueArgs): Promise<void> {
-    return this.route(args.app).set_value(args);
+    return this.via(args.app, (driver) => driver.set_value(args));
   }
 
   type_text(args: TypeTextArgs): Promise<void> {
-    return this.route(args.app).type_text(args);
+    return this.via(args.app, (driver) => driver.type_text(args));
+  }
+
+  // --- observation -------------------------------------------------------
+
+  /** Route to the claiming driver and report whatever it throws. */
+  private via<T>(app: string, run: (driver: ActionDriver) => Promise<T>): Promise<T> {
+    return this.observed(() => run(this.route(app)));
+  }
+
+  private async observed<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof ActionError && this.deps.onError !== undefined) {
+        try {
+          this.deps.onError(error);
+        } catch {
+          // Intentionally swallowed: watching must not change what happened.
+        }
+      }
+      throw error;
+    }
   }
 }
