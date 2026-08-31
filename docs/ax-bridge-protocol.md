@@ -210,6 +210,44 @@ neither and only move the caret for a real click. So `focusVia` defaults to
 one that worked in `focused.method`. Pin it with `focusVia: "press" | "focused" |
 "click"` when you want a specific mechanism and its failure reported.
 
+**Focus is verified by read-back before any key is sent.** A focus call returning
+`.success` is a claim — the same claim `AXValue` and `AXFocused` make on a
+`contenteditable` while doing nothing. After a strategy reports success the helper
+polls `AXFocusedUIElement` and requires it to identify the target element; a
+strategy that cannot be proven counts as failed and the next is tried. If none can
+be proven the op answers `FOCUS_FAILED` and **sends nothing**:
+
+```jsonc
+{"ok": false, "error": {"code": "FOCUS_FAILED",
+  "message": "could not put the caret in node 42, so no keys were sent. …",
+  "details": {"attempted": ["press", "focused", "click"], "claimedSuccess": ["click"],
+              "keysSent": 0,
+              "focusActuallyOn": {"role": "AXTextField", "AXIdentifier": "other-field"}}}}
+```
+
+On success, `focused` reports how identity was established:
+`{"method": "focused", "attempted": ["press","focused"], "verifiedBy": "identity",
+"focusedRole": "AXTextField"}`. `verifiedBy` is `identity`, a stable attribute name
+(`AXDOMIdentifier`, `AXIdentifier`, `frame`), or one of those with `/ancestorN`
+when focus landed on a descendant — focus on a text run inside a composer is focus
+on the composer.
+
+Identity is **not** `CFEqual`. Chromium returns a fresh `AXUIElement` from every
+`AXFocusedUIElement` read, so pointer equality is false for the same DOM node.
+Matching is by stable attributes under two strict rules: any strong key present on
+both sides must agree, and at least one must be present on both and agree. When
+nothing can be proven either way the op refuses rather than typing.
+
+The strong keys are `AXDOMIdentifier`, `AXIdentifier` and the frame. Measured on a
+real CEF composer (Draft.js `public-DraftEditor-content`), **neither identifier is
+present** — only a class list and a frame — so the frame is what carries the proof
+on web content, not a last resort. The class list is checked for contradiction only:
+siblings in a message list share it exactly, so a match proves nothing while a
+mismatch proves they are different elements.
+
+The plan carries `"verifiesFocus": true`, so the guarantee is checkable in a dry
+run. `dryRun` performs no focus and sends nothing.
+
 ### `bgSession` — reusing a target, and the optional suppression layer
 
 A session is a convenience: it holds a resolved target and the field options so

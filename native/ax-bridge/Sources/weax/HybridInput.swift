@@ -22,8 +22,6 @@ import Foundation
 /// write. An executor that quietly falls back to `setValue` here reports success and
 /// sends nothing.
 enum HybridInput {
-    private static let focusSettleMicroseconds: UInt32 = 60_000
-
     struct Plan {
         let nodeId: Int
         let focusAction: String
@@ -42,6 +40,9 @@ enum HybridInput {
                 "characters": .int(text.count),
                 "target": target.json,
                 "route": .string("focus + postToPid(\(target.pid))"),
+                // Part of the contract, visible without running: focus is read back from
+                // AXFocusedUIElement and must identify this element before a key is sent.
+                "verifiesFocus": .bool(true),
                 "perCharacterMs": .int(Int(perCharacterMicroseconds) / 1000)
             ])
         }
@@ -60,9 +61,11 @@ enum HybridInput {
             return .object(["ok": .bool(true), "dryRun": .bool(true), "plan": plan.json])
         }
 
+        // Throws FOCUS_FAILED without sending anything when the caret cannot be proven to
+        // be in the element. The verifier polls for focus to settle, so there is no blind
+        // sleep here to get wrong.
         let focused = try Focuser.focus(element: element, action: focusAction, strategy: strategy,
                                         target: target, fields: fields)
-        usleep(focusSettleMicroseconds)
 
         let addressing = try BackgroundInput.type(text, target: target, fields: fields,
                                                   perCharacterMicroseconds: perCharacterMicroseconds)

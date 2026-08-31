@@ -84,11 +84,28 @@ check "scroll with no delta is refused"    "BAD_REQUEST" "$(q 7 '.error.code')"
 check "51/58 can be switched off"          "false,false" "$(q 8 '[.result.plan.addressing.fields["51"],.result.plan.addressing.fields["58"]]|join(",")')"
 check "40 survives on its own"             "true"        "$(q 8 '.result.plan.addressing.fields["40"]')"
 
-# 7 — errors, including the ones a caller must be able to tell apart.
+# 7 — focusAndType promises the caret is in the element before anything is typed, and
+#     says so in its plan. A fresh process has allocated no handles yet, so `tree` at depth
+#     0 is run first purely to mint one: it makes the application element node 1.
+#     The live proof that a failed verification sends zero keys is in scripts/live-probe.sh,
+#     which needs a real element to fail against.
+{
+  printf '{"id":30,"op":"tree","pid":%s,"maxDepth":0}\n' "$PID"
+  printf '{"id":31,"op":"focusAndType","pid":%s,"windowNumber":%s,"nodeId":1,"text":"x","dryRun":true}\n' "$PID" "$WIN"
+  printf '{"id":99,"op":"shutdown"}\n'
+} | "$BIN" > "$OUT_DIR/focus.ndjson" 2>> "$OUT_DIR/background.err"
+f() { jq -r --argjson i "$1" "select(.id==\$i) | $2" "$OUT_DIR/focus.ndjson"; }
+
+check "a handle was minted for the test" "1"      "$(f 30 '.result[0].nodeId')"
+check "focusAndType verifies focus"      "true"   "$(f 31 '.result.plan.verifiesFocus')"
+check "and reports the strategy"         "auto"   "$(f 31 '.result.plan.focusVia')"
+check "a dry run types nothing"          "true"   "$(f 31 '.result.dryRun')"
+
+# 8 — errors, including the ones a caller must be able to tell apart.
 check "unknown node is refused"            "NO_SUCH_NODE"    "$(q 9 '.error.code')"
 check "unknown session is refused"         "NO_SUCH_SESSION" "$(q 10 '.error.code')"
 
-# 8 — a window list that cannot be trusted is reported as such, never as an empty list.
+# 9 — a window list that cannot be trusted is reported as such, never as an empty list.
 #     Whichever of these three the machine is in right now, none of them may answer "ok
 #     with no windows" and let a caller retry forever.
 check "windowInfo always answers"             "true" "$(q 11 '.ok')"
@@ -107,7 +124,7 @@ if [ "$WI_CODE" != "OK" ]; then
   check "and shows the AX window census"       "true" "$(q 11 '.result.diagnosis.details | has("axWindows") or has("cgWindows")')"
 fi
 
-# 9 — a tree that is not ready is an error with a census attached, never a stub returned
+# 10 — a tree that is not ready is an error with a census attached, never a stub returned
 #     as if it were complete. A native app has no web area at all, which is the same shape
 #     as a CEF app that has not woken up yet.
 AT_OK=$(q 12 '.ok')
@@ -121,7 +138,7 @@ fi
 check "env reports the private symbols"    "true" "$(q 13 '.result.spi | has("setWindowLocation")')"
 check "env reports the screen state"       "true" "$(q 13 '.result.screen | has("locked")')"
 
-# 10 — an empty window list must never come back unexplained. Three states produce one,
+# 11 — an empty window list must never come back unexplained. Three states produce one,
 #      two of them cannot be recovered from by retrying, and an empty array reads the same
 #      in all three. The bare form throws; the meta form carries the classification.
 {

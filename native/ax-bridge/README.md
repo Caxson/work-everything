@@ -248,7 +248,41 @@ Focusing is not one mechanism either — a web `contenteditable` advertises `AXP
 honours it while ignoring `AXFocused`, a native `AXTextField` is the exact opposite and
 answers `actionUnsupported (-25206)` to `AXPress`, and some composers honour neither and
 only move the caret for a real click. So `focusVia` defaults to `auto` and tries an
-advertised action, then a settable attribute, then a click, reporting which one worked.
+advertised action, then a settable attribute, then a click.
+
+**Every one of them then has to prove it worked, before a single key is sent.** A focus
+call returning `.success` is a claim, not a fact — the same claim `AXValue` and `AXFocused`
+make on a `contenteditable` while doing nothing at all. So the focus is read back from
+`AXFocusedUIElement` and must identify the target element; a strategy that cannot be proven
+is treated as one that failed and the next is tried. When none can be proven the answer is
+`FOCUS_FAILED` with `keysSent: 0` and `focusActuallyOn` naming where the caret really is.
+
+This is a safety property, not a nicety. Keys arriving at an unfocused Chromium window are
+read as global shortcuts: typing `w` into a composer that was never focused closes the tab,
+and the text lands wherever the real focus was — someone else's open conversation.
+
+Identity here **cannot** use `CFEqual`. Chromium returns a fresh `AXUIElement` from every
+`AXFocusedUIElement` read, so pointer equality is false even for unquestionably the same
+DOM node. Comparison is by stable attributes under two strict rules: any strong key present
+on both sides must agree (a differing `AXDOMIdentifier` proves they are *different*
+elements), and at least one must be present on both and agree, because role and title alone
+match every sibling in a list. The focused element's ancestors are walked too, since focus
+landing on a text run inside the composer is focus on the composer. When nothing can be
+proven either way it refuses rather than types.
+
+Which key actually does the work depends on what the element exposes, and the measurement
+is worth stating because it is the opposite of what the names suggest:
+
+| element | `AXDOMIdentifier` | `AXIdentifier` | frame | class list |
+|---|---|---|---|---|
+| native `AXTextField` (measured) | — | `probe-field-W1` | yes | — |
+| CEF composer, Draft.js (measured) | **absent** | **absent** | yes | `public-DraftEditor-content` |
+
+So on a real web composer **neither identifier exists** and the frame is what proves
+identity — it is a first-class key, not a fallback. The class list can only *veto*: every
+row in a message list carries identical classes, so treating a match as proof would let
+focus on a sibling pass as focus on the target, which is precisely the harm being
+prevented. A differing class list rejects; a matching one proves nothing.
 Asking what an element advertises before performing an action is the general lesson here: a
 real `AXScrollArea` advertises **no actions at all**, so scrolling one through `press` was
 never going to work — which is why `scroll` synthesizes a wheel event instead.

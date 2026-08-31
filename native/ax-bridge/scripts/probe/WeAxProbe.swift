@@ -61,6 +61,15 @@ final class Unit: NSObject {
         field.setAccessibilityIdentifier("probe-field-\(tag)")
         root.addSubview(field)
 
+        // A label: same AXRole family as the editable field, no way to take focus, and
+        // nothing happens when it is clicked. It exists so the suite can drive a focus
+        // strategy that reports success while the caret provably does not move — the
+        // case that must send zero keys.
+        let label = NSTextField(labelWithString: "not focusable")
+        label.frame = NSRect(x: 20, y: 20, width: 200, height: 20)
+        label.setAccessibilityIdentifier("probe-label-\(tag)")
+        root.addSubview(label)
+
         window.contentView = root
         // Join whatever Space is active. Without this a window opened while a full-screen
         // app is in front lands on the desktop Space, is never on screen, and accessibility
