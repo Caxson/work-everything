@@ -160,19 +160,31 @@ function focusAndType(params) {
   const landed = process.env['FAKE_FOCUS_FAILS'] !== '1' && params.nodeId === COMPOSER_NODE;
   if (!landed) {
     state.focused = false;
-    return { __error: { code: 'FOCUS_FAILED', message: 'could not put the caret in the target element; sent no keystrokes' } };
+    // The helper's own shape: it verifies focus landed before typing, and says
+    // so in a fact rather than in prose.
+    return {
+      __error: {
+        code: 'FOCUS_FAILED',
+        message:
+          `could not put the caret in node ${params.nodeId}, so no keys were sent. Tried press, focused, click. ` +
+          'press, focused reported success and the focus did not land on the element afterwards',
+        details: { attempted: ['press', 'focused', 'click'], claimedSuccess: ['press', 'focused'], keysSent: 0 },
+      },
+    };
   }
   state.focused = true;
   const text = String(params.text ?? '');
   // A write that reports success and lands nothing: exactly what an
   // accessibility write does to a contenteditable.
-  if (process.env['FAKE_SWALLOW_TEXT'] === '1') return { ok: true, focused: { action: 'AXPress' }, typed: { characters: 0 } };
+  if (process.env['FAKE_SWALLOW_TEXT'] === '1') {
+    return { ok: true, focused: { method: 'press', attempted: ['press'], verifiedBy: 'identity', focusedRole: 'AXTextArea' }, typed: { characters: 0 } };
+  }
   if (text !== '') {
     const last = state.composer[state.composer.length - 1] ?? '';
     state.composer = [...state.composer.slice(0, -1), last + text];
     state.selectAll = false;
   }
-  return { ok: true, focused: { action: 'AXPress' }, typed: { characters: text.length } };
+  return { ok: true, focused: { method: 'press', attempted: ['press'], verifiedBy: 'AXDOMClassList', focusedRole: 'AXTextArea' }, typed: { characters: text.length } };
 }
 
 /**

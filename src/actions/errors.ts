@@ -45,6 +45,13 @@ export class ActionError extends Error {
   constructor(
     readonly code: ActionErrorCode,
     message: string,
+    /**
+     * Structured diagnostics from whatever produced the failure. Worth
+     * carrying because some of them are facts rather than prose: a
+     * `FOCUS_FAILED` says `keysSent: 0`, which is the difference between "we
+     * think nothing was typed" and "nothing was typed".
+     */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'ActionError';
@@ -109,6 +116,7 @@ export function toActionError(error: unknown, context: string): ActionError {
       `${context}: the Mac is locked, so no window can be addressed. Nothing here will change until a person unlocks it — not retried.`,
     );
   }
-  if (mapped !== undefined) return new ActionError(mapped, `${context}: ${detail}`);
-  return new ActionError('DRIVER_ERROR', `${context}: ${detail}`);
+  const details = typeof error === 'object' && error !== null ? (error as { details?: unknown }).details : undefined;
+  if (mapped !== undefined) return new ActionError(mapped, `${context}: ${detail}`, details);
+  return new ActionError('DRIVER_ERROR', `${context}: ${detail}`, details);
 }

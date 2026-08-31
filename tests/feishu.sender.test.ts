@@ -164,10 +164,15 @@ describe('feishu.reply', () => {
   });
 
   it('sends nothing at all when the caret cannot be confirmed inside the composer', async () => {
+    // The helper verifies that focus actually landed rather than trusting the
+    // call that claimed it did — on a contenteditable, setting AXFocused
+    // returns success and does nothing. A claim that cannot be proven is a
+    // refusal, and a refusal means no key was posted.
     const { executor, log } = rig({ env: { FAKE_FOCUS_FAILS: '1' } });
     const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('sent no keystrokes');
+    expect(result.error).toContain('no keys were sent');
+    expect(result.error).toContain('did not land on the element');
     // The very first thing done to the composer is the focus, and it refused.
     // Not one key followed it — including the select-all that would otherwise
     // have gone to whatever window was listening.

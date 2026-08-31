@@ -40,6 +40,27 @@ describe('the write route into web content', () => {
     }
   });
 
+  it('carries the helper’s proof that nothing was typed, as a fact and not as prose', async () => {
+    // `keysSent: 0` is checkable; "sent no keystrokes" in a sentence is not.
+    const transport: FocusAndTypeTransport = {
+      focusAndType: () =>
+        Promise.reject(
+          new AxBridgeError('could not put the caret in node 5, so no keys were sent', 'FOCUS_FAILED', {
+            attempted: ['press', 'focused', 'click'],
+            claimedSuccess: ['press'],
+            keysSent: 0,
+          }),
+        ),
+    };
+    try {
+      await bridgeKeyboardRoute(transport).focusAndType({ pid: 1, nodeId: 5, text: 'hi' });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect((error as ActionError).code).toBe('FOCUS_FAILED');
+      expect((error as ActionError).details).toMatchObject({ keysSent: 0, claimedSuccess: ['press'] });
+    }
+  });
+
   it('passes a real bridge failure through with its own meaning', async () => {
     const transport: FocusAndTypeTransport = { focusAndType: () => Promise.reject(new AxBridgeError('locked', 'SCREEN_LOCKED')) };
     await expect(bridgeKeyboardRoute(transport).focusAndType({ pid: 1, text: 'x', replace: false })).rejects.toMatchObject({ code: 'SCREEN_LOCKED' });

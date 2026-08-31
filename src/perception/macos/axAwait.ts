@@ -64,7 +64,9 @@ export async function awaitTree(client: AxBridgeClient, pid: number, options: Aw
 /**
  * An app with no web content at all. Two probes that agree on how much there
  * is to walk mean the tree has finished being built; anything else keeps the
- * helper's own error, which describes what it saw.
+ * helper's own error, which describes what it saw. A traversal that hit its
+ * budget is not evidence of anything — two equal counts there only say the
+ * budget did not change.
  */
 async function settleWithoutWebContent(
   client: AxBridgeClient,
@@ -80,7 +82,10 @@ async function settleWithoutWebContent(
   await sleep(options.pollMs);
   const second = await client.findWithBudget(pid, selector, limits);
 
-  const stable = first.visited > 0 && first.visited === second.visited;
+  // A truncated traversal stopped at the budget, so two equal counts say the
+  // budget is the same size, not that the tree has stopped growing.
+  const budgeted = first.truncated === true || second.truncated === true;
+  const stable = !budgeted && first.visited > 0 && first.visited === second.visited;
   if (second.nodes.length > 0 || !stable) throw notReady;
   return { roots: await client.roots(pid, options.maxDepth, options.maxNodes), webAreas: 0, attempts: 2 };
 }

@@ -9,7 +9,7 @@ interface Script {
   /** What the helper's own wait answers, or throws. */
   readonly readiness?: AxTreeReadiness | Error;
   /** What the fallback probes see, one per call. */
-  readonly probes?: readonly { webAreas: number; visited: number }[];
+  readonly probes?: readonly { webAreas: number; visited: number; truncated?: boolean }[];
 }
 
 function bridge(script: Script): { client: AxBridgeClient; ops: () => readonly string[] } {
@@ -26,7 +26,11 @@ function bridge(script: Script): { client: AxBridgeClient; ops: () => readonly s
       ops.push('findWithBudget');
       const step = script.probes?.[Math.min(probe, (script.probes.length ?? 1) - 1)] ?? { webAreas: 0, visited: 0 };
       probe += 1;
-      return { nodes: Array.from({ length: step.webAreas }, (): AxNode => ({ nodeId: -1, role: 'AXWebArea' })), visited: step.visited };
+      return {
+        nodes: Array.from({ length: step.webAreas }, (): AxNode => ({ nodeId: -1, role: 'AXWebArea' })),
+        visited: step.visited,
+        ...(step.truncated === undefined ? {} : { truncated: step.truncated }),
+      };
     },
     roots: async (): Promise<readonly AxNode[]> => {
       ops.push('roots');
@@ -92,6 +96,20 @@ describe('waiting for a tree that is worth reading', () => {
       ],
     });
     await expect(awaitTree(rig.client, 42, options)).rejects.toMatchObject({ code: 'TREE_NOT_READY' });
+  });
+
+  it('does not read a budget-limited traversal as a settled tree', async () => {
+    // Two equal counts from a traversal that stopped at its budget say the
+    // budget did not change, not that the tree stopped growing.
+    const rig = bridge({
+      readiness: treeNotReady(42, 1_000),
+      probes: [
+        { webAreas: 0, visited: 12_000, truncated: true },
+        { webAreas: 0, visited: 12_000, truncated: true },
+      ],
+    });
+    await expect(awaitTree(rig.client, 42, options)).rejects.toMatchObject({ code: 'TREE_NOT_READY' });
+    expect(rig.ops()).not.toContain('roots');
   });
 
   it('passes anything that is not a readiness failure straight through', async () => {
