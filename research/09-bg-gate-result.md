@@ -39,6 +39,28 @@
   2. 任何依赖窗口的流程（窗口寻址、遮挡、最小化、坐标动作）跑之前，先用**自己可控的金丝雀目标**断言这项能力；
   3. 不要用 `CGSSessionScreenIsLocked` 当唯一前置——它只覆盖锁屏，覆盖不了这个状态。
 
+**④ 有四种互不相同的「AX 静默失效」状态，锁屏检查只覆盖其中一种。**（实测见 §12）
+
+| # | 状态 | 检测方式 | 症状 |
+|---|---|---|---|
+| 1 | 锁屏 | `CGSSessionScreenIsLocked = 1` | `AXWindows` 每项 `CFEqual` 于 app 元素 |
+| 2 | **屏保运行**（会话未锁！） | `pgrep legacyScreenSaver` + onScreen 窗口数骤降 | 一次性抽走**所有** app 的 AX 窗口；`CGSSessionScreenIsLocked` **全程 false** |
+| 3 | **Stage Manager 开启** | `defaults read com.apple.WindowManager GloballyEnabled` = 1 | 非聚焦 app 的窗口被缩成边缘缩略图；CG bounds 变成 `84x105 @ (1613,332)` 之类，与 AX 报的逻辑 frame 完全对不上 |
+| 4 | 窗口未合成上屏 | `.optionAll` 有、`.optionOnScreenOnly` 无 | `AXWindows` 返回 `err=success, count=0` |
+
+**共同点：全部报 success，没有任何一个会抛错。** 生产代码必须用**能力断言**而不是状态枚举：
+起一个自己可控的金丝雀目标，断言「AX 能返回它的窗口 + `resolvedBy=axSPI` + 几何可读」，不过就停。
+`onScreen` 窗口数是很好的健康度指标——本机正常 40+，屏保/Stage Manager 折叠时掉到 8。
+
+**⑤ AX 的窗口管理动作不是焦点安全的，而且会静默失败。**（实测见 §12.3）
+
+- `AXMinimized`：`IsAttributeSettable` 报 **true**、`SetAttributeValue` 报 **success**，
+  但 0.6s 与 2s 后复读 `AXMinimized` 仍是 **false**——窗口根本没最小化。
+- 退到按标题栏最小化按钮：`AXMinimizeButton` 查得到、`AXPress` 报 **success**，窗口**依然没最小化**。
+- **副作用**：这次 `AXPress` 把前台从「微信」切到了另一个 Chrome 实例。
+  → **窗口管理类 AX 动作（minimize/raise/zoom）不能假定不抢前台**，与 `AXPress` 打页面按钮不同（后者实测焦点安全）。
+- 以上均在 Stage Manager 开启状态下测得，Stage Manager 很可能就是 minimize 失效的原因。
+
 **② 锁屏会让窗口寻址整体失效，且失败方式是静默的。**（实测见 §0）
 
 - 锁屏下 `AXWindows` 返回的**每一项都 `CFEqual` 于应用元素本身**（数量还是对的），
@@ -636,3 +658,62 @@ cd /Users/caosen/.claude/jobs/ae02c800/tmp/bggate && ./run-round2.sh
 ```
 
 **目前最大的效率损耗是自动锁屏**：三轮里两轮被锁断（18:09、20:34）。建议临时把锁屏时间调长或关掉再跑。
+
+
+---
+
+## 12. S7 / S8 / S9 最终结论（2026-08-31 复跑）
+
+环境：屏保曾两次抽走全部 AX 窗口（`onScreen` 8/381 vs 正常 42/351），**Stage Manager 全程开启**。
+本节只采纳在健康窗口期（`onScreen` 42、金丝雀 `healthy=true`）内取得的读数。
+
+### 12.1 S7 · L2 激活对 CEF 出树有无增量 —— **零贡献（定案）**
+
+激活前后 window 子树都是 **49 节点 / 1 个 AXWebArea**；app 子树 360→364 的差异是标签页噪声。
+**读 CEF 不需要 L2 激活。** 与 §9.2 的结论一致：出树的触发条件是「有 AT 客户端来遍历」，不是激活。
+
+### 12.2 S8 · 完全遮挡 —— **树完全不受影响** ✅
+
+**前提先立住再测**（上一轮就是栽在前提没成立还出结论）：
+
+- 遮挡判据换成 `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` 的真实 z 序。
+  **`AXUIElementCopyElementAtPosition` 不能用作遮挡判据**——Chromium 对它返回 `notImplemented`，
+  于是「命中 Chrome」和「命中失败」返回值一样，上一轮看到的「空 pid/空 role」其实就是命中了 Chrome，
+  等于探针没盖上。判据必须是「命中探针 pid」，而不是「非空」。
+- 实测 z 序：探针窗口 `97412 → z=18`，Chrome 窗口 `97248 → z=29` ⇒ **探针在前，遮挡成立**。
+  叠加 Stage Manager 已把 Chrome 缩成 `84x105` 缩略图——比"被另一个窗口盖住"更彻底的不可见。
+
+| 状态 | window 子树 | AXWebArea |
+|---|---|---|
+| 未遮挡基线 | 49 节点 | 1 |
+| **被完全遮挡 + Stage Manager 缩略图** | **49 节点** | **1** |
+
+`treeState = awake`，`pollRounds = 0`（一次重抓就醒）。
+**结论：窗口被完全遮挡、甚至被 Stage Manager 折叠成缩略图，CEF 的 AX 树一模一样，不掉一个节点。**
+
+### 12.3 S9 · 最小化 —— **未测成**（无法把窗口置于最小化状态）
+
+三条路径全部**报成功但不生效**：
+
+| 手段 | 返回 | 实际状态 |
+|---|---|---|
+| `IsAttributeSettable(AXMinimized)` | **true** | —— |
+| `SetAttributeValue(AXMinimized, true)` | **success** | 0.6s / 2s 后复读仍 `false` |
+| `AXMinimizeButton` → `AXPress` | 查找 success、press **success** | 仍 `false` |
+
+**前提没成立，所以不出「最小化后树在不在」的结论。**
+两个附带发现已写进顶部区块：① 这是第五类静默失败（报 success 却没生效）；
+② 最小化按钮的 `AXPress` **把前台切走了**（微信 → 另一个 Chrome 实例），
+说明窗口管理类 AX 动作不是焦点安全的——这和「`AXPress` 打页面按钮」完全不同，后者实测焦点安全。
+
+最小化失效很可能就是 Stage Manager 造成的（它接管了最小化语义）。要测这一条，
+需要在**关闭 Stage Manager**的环境下复跑——但那是用户的机器配置，得他本人同意，我没有改。
+
+### 12.4 对生产的直接含义
+
+- **遮挡不影响可用性**：用户把 agent 的目标窗口压在最底下、甚至开着 Stage Manager，CEF 树照样完整可读。
+  这是「用户正常用电脑时 agent 仍可工作」的关键支撑。
+- **最小化仍是未知数**，且 agent **无法靠 AX 自己把窗口最小化/还原**（三条路都失效），
+  所以不能指望「先最小化再操作」或「操作完帮用户收起来」这类编排。
+- **别用 hit-test 判遮挡**，用 CGWindowList z 序。
+- **窗口管理动作要单独归类**：它们既可能静默失败，又可能抢前台，不能和 `AXPress` 页面元素混为一谈。

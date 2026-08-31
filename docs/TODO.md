@@ -160,3 +160,29 @@ Code that cannot tell them apart will retry forever against one of them.
 Before trusting any window-addressed run, launch a probe window and assert that
 accessibility can see it. Checking `CGSSessionScreenIsLocked` alone is not
 enough — case 3 happens with the screen unlocked.
+
+## Occlusion does not matter; minimising is not ours to do
+
+A covered window still answers in full. With a probe window sitting on top of
+Chrome — confirmed by the window server's own z-order, not by hit-testing —
+the tree came back at 49 nodes and one web area, identical to the uncovered
+baseline. The machine had Stage Manager on at the time, with Chrome shrunk to a
+thumbnail: more thoroughly out of sight than any overlap, and the tree was
+still whole.
+
+So a person can bury the window an agent is working in and nothing breaks.
+That is what makes "work while the human works" hold in practice.
+
+`AXUIElementCopyElementAtPosition` cannot be used to decide what is on top:
+Chromium answers `notImplemented`, so a hit on Chrome and a failed hit look
+identical. Ask the window server instead.
+
+Minimising is the opposite story. `AXMinimized` reports settable, the write
+returns success, and the window stays where it is; pressing `AXMinimizeButton`
+behaves the same. Probably Stage Manager owning that gesture. **Do not design a
+sequence that minimises or restores a window** — it cannot be relied on.
+
+And one action to keep well away from the others: pressing a window-management
+control **moved the frontmost application**, where pressing a button inside a
+page did not. Window chrome and page content are not the same class of action,
+whatever the API suggests.
