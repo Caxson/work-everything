@@ -71,6 +71,7 @@ we status              # what each tier absorbed, and what is waiting on you
 we scenarios           # scenarios and the plan candidates still on probation
 we promote <planId>    # promote a candidate by hand
 we replay <traceId>    # a recorded trajectory, and how it would route now
+we queue               # actions held while the screen was locked
 ```
 
 Configuration is a JSON file (`--config`, or `WORK_EVERYTHING_CONFIG`) merged
@@ -94,6 +95,22 @@ as a pending confirmation instead of being sent. Perception needs Feishu's
 window to be visible — closed to the tray, or behind a locked screen, the app
 exposes no accessibility tree at all and the daemon says so rather than
 pretending the conversation is empty.
+
+Acting is different from perceiving. A locked screen takes window addressing
+away from every application at once, so anything that would touch a window is
+held rather than attempted, and runs when the screen comes back. What waits is
+a whole chain — half of one running before the lock and half after would have
+the two halves looking at different worlds — and it is vetted on the way out:
+dropped outright if it has aged past its time, checked against the world it
+assumed, and sent back for confirmation if it waited long enough that an
+earlier approval no longer means anything.
+
+```bash
+we queue               # what is being held, and why
+we queue --discarded   # what never ran, and what ruled it out
+we queue-approve <id>  # release one that came back for confirmation
+we queue-drop <id>     # discard one
+```
 
 `scripts/e2e-feishu.mjs` drives the whole loop against the real app; it refuses
 to run anywhere but a chat with yourself.

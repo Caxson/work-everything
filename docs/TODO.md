@@ -14,7 +14,11 @@ Everything known to be missing or provisional in this skeleton lives here.
   label, and there is no way to reply with anything but text.
 - Perception stops dead when Feishu is closed to the tray or the screen is
   locked: with no window the app exposes no accessibility tree. The daemon
-  reports this instead of failing quietly, but it cannot work around it.
+  reports this instead of failing quietly, and it cannot work around it —
+  reading Feishu means reading its window. Acting is handled: anything that
+  touches a window is deferred while the screen is locked and vetted before it
+  runs (see `we queue`). Sources that are not read through a window are
+  unaffected.
 - `AxPerceiver` watches by bundle id at startup. It does not notice an app
   launching, quitting, or changing pid afterwards.
 - Every AX notification becomes one event. There is no debounce, so a chatty
