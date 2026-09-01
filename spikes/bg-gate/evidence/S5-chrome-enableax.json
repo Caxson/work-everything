@@ -1,0 +1,48 @@
+{
+  "enableAX" : {
+    "AXEnhancedUserInterface" : false,
+    "AXManualAccessibility" : false
+  },
+  "observer" : {
+    "created" : true,
+    "registered" : 13,
+    "usedRemoteSPI" : false
+  },
+  "pass1" : {
+    "app" : {
+      "maxDepth" : 6,
+      "nodes" : 311,
+      "roles" : {
+        "AXApplication" : 1,
+        "AXMenu" : 22,
+        "AXMenuBar" : 1,
+        "AXMenuBarItem" : 11,
+        "AXMenuItem" : 276
+      },
+      "texts" : [
+
+      ],
+      "truncated" : false,
+      "webAreas" : 0
+    }
+  },
+  "pass2" : {
+    "app" : {
+      "maxDepth" : 6,
+      "nodes" : 311,
+      "roles" : {
+        "AXApplication" : 1,
+        "AXMenu" : 22,
+        "AXMenuBar" : 1,
+        "AXMenuBarItem" : 11,
+        "AXMenuItem" : 276
+      },
+      "texts" : [
+
+      ],
+      "truncated" : false,
+      "webAreas" : 0
+    }
+  },
+  "pid" : 77057
+}

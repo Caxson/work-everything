@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.ruff_cache/
+
+# other agents' build artifacts
+__pycache__/
+*.pyc
+.build/
+DerivedData/

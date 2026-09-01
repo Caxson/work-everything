@@ -1,0 +1,383 @@
+/**
+ * The daemon: one event in, one trajectory out.
+ *
+ * Everything interesting is decided elsewhere — this file's job is to hold
+ * the loop honest. Each event is routed once, gated by trust once, executed
+ * on exactly one tier, and recorded exactly once, including when the tier it
+ * chose could not run and it fell through to a slower one.
+ *
+ * The one rule worth stating out loud: a chain whose template variables
+ * cannot be filled without a model is *not* muscle, whatever the router
+ * said. It is demoted to the fast tier and the model call is recorded, so
+ * "zero model calls" in the trajectory always means zero.
+ *
+ * The second rule, added with the deferral gate: **a chain that was never
+ * allowed to start did not fail.** When the gate refuses admission — the
+ * screen is locked and the chain needs it — no trust outcome is recorded at
+ * all. Counting that as a failure would demote, and eventually quarantine, a
+ * scenario for the offence of the user having locked their Mac.
+ */
+import type { Event } from './core/events.js';
+import { eventText } from './core/events.js';
+import type { Scenario } from './core/scenario.js';
+import { RESERVED_VARS, requiredVars } from './core/scenario.js';
+import type { VarBag } from './core/engine.js';
+import { executeChain } from './core/engine.js';
+import type { RouteDecision, RouterConfig } from './core/router.js';
+import { route } from './core/router.js';
+import type { LightModel, PlannerConfig, ToolSchema } from './core/planner.js';
+import { generatePlan } from './core/planner.js';
+import type { PlanCandidate, PromotionConfig } from './core/promotion.js';
+import { createCandidate, makePlanId, observe, promotionReadiness, recordRun, toScenario } from './core/promotion.js';
+import type { TrustConfig, TrustOutcome, TrustState } from './core/trust.js';
+import { applyOutcome, initialTrust } from './core/trust.js';
+import type { ToolRunner } from './execution/base.js';
+import type { SlowThinker } from './hosts/base.js';
+import type { Perceiver } from './perception/base.js';
+import { mergeEvents } from './perception/base.js';
+import type { TrajectoryRecord, TrajectoryStep } from './memory/trajectory.js';
+import { stepsOf } from './memory/trajectory.js';
+import type { TrajectoryStore } from './memory/trajectory.js';
+import type { Registry } from './memory/registry.js';
+import type { ExecutionGate } from './queue/gate.js';
+
+/** Asked before an untrusted chain runs. `false` sends the event to slow thinking. */
+export type ConfirmFn = (request: { readonly event: Event; readonly decision: RouteDecision; readonly chain: Scenario }) => Promise<boolean>;
+
+/**
+ * Where a slow-thinking answer goes.
+ *
+ * The muscle and fast tiers answer through their own chains — a step that
+ * writes back is just another tool — but the slow tier produces prose that no
+ * chain asked for. Without this seam that text would end its life in the
+ * trajectory, and the person who sent the message would never see a reply.
+ * It is called only when the host actually said something.
+ */
+export type ResponderFn = (response: { readonly event: Event; readonly text: string; readonly tier: string; readonly ok: boolean }) => Promise<void>;
+
+export interface DaemonOptions {
+  readonly store: TrajectoryStore;
+  readonly registry: Registry;
+  readonly runner: ToolRunner;
+  readonly tools: readonly ToolSchema[];
+  readonly router: RouterConfig;
+  readonly trust: TrustConfig;
+  readonly promotion: PromotionConfig;
+  readonly planner: PlannerConfig;
+  readonly perceivers?: readonly Perceiver[];
+  readonly lightModel?: LightModel | undefined;
+  readonly host?: SlowThinker | undefined;
+  /** Omitted means nobody is watching: untrusted chains stay unconfirmed. */
+  readonly confirm?: ConfirmFn | undefined;
+  /** Omitted means slow-tier answers are recorded but delivered nowhere. */
+  readonly responder?: ResponderFn | undefined;
+  /**
+   * Consulted before a chain runs. Omitted means nothing is ever deferred and
+   * a locked screen fails calls where they stand, as it did before the queue.
+   */
+  readonly gate?: ExecutionGate | undefined;
+}
+
+export class Daemon {
+  private scenarios: readonly Scenario[];
+  private candidates: readonly PlanCandidate[];
+  private trust: Map<string, TrustState>;
+
+  constructor(private readonly options: DaemonOptions) {
+    this.scenarios = options.registry.scenarios();
+    this.candidates = options.registry.candidates();
+    this.trust = new Map(options.registry.trust());
+  }
+
+  /** Consume every perceiver until the signal aborts or all sources end. */
+  async run(signal?: AbortSignal): Promise<void> {
+    const perceivers = this.options.perceivers ?? [];
+    for await (const event of mergeEvents(perceivers, signal, (name, error) => {
+      console.error(`[daemon] perceiver '${name}' failed: ${error instanceof Error ? error.message : String(error)}`);
+    })) {
+      if (signal?.aborted === true) break;
+      await this.handle(event);
+    }
+  }
+
+  async handle(event: Event): Promise<TrajectoryRecord> {
+    const started = Date.now();
+    const text = eventText(event);
+    const decision = route({
+      event,
+      scenarios: this.scenarios,
+      candidates: this.candidates,
+      trust: this.trust,
+      config: this.options.router,
+    });
+
+    const outcome = await this.dispatch(event, text, decision);
+    const record: TrajectoryRecord = {
+      traceId: event.traceId,
+      ts: event.ts,
+      source: event.source,
+      kind: event.kind,
+      text,
+      payload: event.payload,
+      tier: outcome.tier,
+      scenarioId: outcome.scenarioId,
+      planId: outcome.planId,
+      needsConfirmation: outcome.needsConfirmation,
+      confirmed: outcome.confirmed,
+      score: decision.score,
+      reason: outcome.reason,
+      considered: decision.considered,
+      llmCalls: outcome.llmCalls,
+      durationMs: Date.now() - started,
+      ok: outcome.ok,
+      error: outcome.error,
+      steps: outcome.steps,
+    };
+    this.options.store.append(record);
+    await this.deliver(event, outcome);
+    return record;
+  }
+
+  /**
+   * Hand a slow-tier answer to whoever asked. Recorded first, delivered
+   * second, and a delivery that throws is logged rather than allowed to lose
+   * the trajectory that already exists.
+   */
+  private async deliver(event: Event, outcome: TierOutcome): Promise<void> {
+    const responder = this.options.responder;
+    if (responder === undefined || outcome.text === undefined || outcome.text.trim() === '') return;
+    try {
+      await responder({ event, text: outcome.text, tier: outcome.tier, ok: outcome.ok });
+    } catch (error) {
+      console.error(`[daemon] responder failed for ${event.traceId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // --- tiers ---------------------------------------------------------------
+
+  private async dispatch(event: Event, text: string, decision: RouteDecision): Promise<TierOutcome> {
+    if (decision.tier === 'muscle' && decision.scenarioId !== undefined) {
+      const scenario = this.scenarios.find((candidate) => candidate.id === decision.scenarioId);
+      if (scenario !== undefined) {
+        if (openVars(scenario).length === 0) return await this.runDeterministic(event, decision, scenario, {}, 0);
+        // Needs values only a model can pull out of this phrasing.
+        return await this.runFast(event, text, { ...decision, tier: 'fast', reason: `${decision.reason}; slots need filling` });
+      }
+    }
+    if (decision.tier === 'fast') return await this.runFast(event, text, decision);
+    return await this.runSlow(text, decision.reason, 'slow');
+  }
+
+  private async runFast(event: Event, text: string, decision: RouteDecision): Promise<TierOutcome> {
+    const cached = decision.planId === undefined ? undefined : this.candidates.find((candidate) => candidate.planId === decision.planId);
+    if (cached !== undefined && openVars(chainAsScenario(cached)).length === 0) {
+      return await this.runDeterministic(event, decision, chainAsScenario(cached), {}, 0, cached);
+    }
+
+    const model = this.options.lightModel;
+    if (model === undefined) return await this.runSlow(text, `${decision.reason}; no LIGHT model configured`, 'fast');
+
+    const planned = await generatePlan({ request: text, tools: this.options.tools, model, config: this.options.planner });
+    if (!planned.ok) return await this.runSlow(text, `planning failed: ${planned.reason}`, 'fast', 1);
+
+    const observation = { query: text, slots: planned.plan.slots, kind: event.kind };
+    // Same tool chain, whatever the phrasing: regenerations fold into one
+    // candidate so successes accumulate instead of scattering.
+    const planId = makePlanId(planned.plan.intent, planned.plan.chain);
+    const existing = this.candidates.find((candidate) => candidate.planId === planId);
+    const candidate =
+      existing === undefined
+        ? createCandidate(
+            { intent: planned.plan.intent, description: planned.plan.description, chain: planned.plan.chain, slotNames: Object.keys(planned.plan.slots) },
+            observation,
+          )
+        : observe(existing, observation);
+
+    return await this.runDeterministic(event, { ...decision, planId: candidate.planId }, chainAsScenario(candidate), planned.plan.slots, 1, candidate);
+  }
+
+  private async runDeterministic(
+    event: Event,
+    decision: RouteDecision,
+    chain: Scenario,
+    slots: Readonly<Record<string, string>>,
+    llmCalls: number,
+    candidate?: PlanCandidate,
+  ): Promise<TierOutcome> {
+    const subjectId = candidate?.planId ?? chain.id;
+    const trust = this.trustFor(subjectId, chain.origin);
+    const needsConfirmation = decision.needsConfirmation;
+
+    if (needsConfirmation) {
+      const confirm = this.options.confirm;
+      if (confirm === undefined) {
+        // Nobody to ask. Record the request and let the host handle it.
+        const fallback = await this.runSlow(eventText(event), `${decision.reason}; awaiting confirmation`, decision.tier, llmCalls);
+        return { ...fallback, needsConfirmation: true, confirmed: null, scenarioId: decision.scenarioId, planId: decision.planId };
+      }
+      const approved = await confirm({ event, decision, chain });
+      if (!approved) {
+        this.saveTrust(applyOutcome(trust, 'rejected'));
+        const fallback = await this.runSlow(eventText(event), `${decision.reason}; declined by operator`, decision.tier, llmCalls);
+        return { ...fallback, needsConfirmation: true, confirmed: false, scenarioId: decision.scenarioId, planId: decision.planId };
+      }
+    }
+
+    const vars = this.baseVars(event, slots);
+
+    // Asked after confirmation and before execution, so whatever is queued was
+    // authorized to run at the moment it was queued — which is exactly the
+    // authorization the queue's own reset window later expires.
+    const admission = await this.options.gate?.admit({ traceId: event.traceId, chain, vars });
+    if (admission !== undefined && !admission.admitted) {
+      return {
+        tier: 'deferred',
+        scenarioId: decision.scenarioId,
+        planId: candidate?.planId ?? decision.planId,
+        needsConfirmation,
+        confirmed: needsConfirmation ? true : null,
+        llmCalls,
+        // Deferring is the daemon doing the right thing, so this is not a
+        // failure — and no trust outcome is applied either way.
+        ok: true,
+        reason: `${decision.reason}; ${admission.reason}`,
+        steps: [],
+      };
+    }
+
+    const result = await executeChain(chain, { runner: this.options.runner, vars });
+
+    // The lock state is polled, so a Mac can lock between admission and the
+    // first step. A chain that lost its screen mid-run did not misbehave:
+    // it is recorded, and it costs neither trust nor a candidate's record.
+    // It is also not put back — part of it may already have happened, and the
+    // next event will be deferred properly now that the refusal has landed.
+    const lostTheScreen = !result.ok && this.options.gate?.screenIsUnavailable() === true;
+    if (!lostTheScreen) {
+      this.saveTrust(applyOutcome(trust, verdict(needsConfirmation, result.ok)));
+      if (candidate !== undefined) this.remember(recordRun(candidate, result.ok));
+    }
+
+    return {
+      tier: lostTheScreen ? `${decision.tier}->screen_lost` : decision.tier,
+      scenarioId: decision.scenarioId,
+      planId: candidate?.planId ?? decision.planId,
+      needsConfirmation,
+      confirmed: needsConfirmation ? true : null,
+      llmCalls,
+      ok: result.ok,
+      reason: lostTheScreen
+        ? `${decision.reason}; the screen locked while this was running, so it is recorded but charged to nobody`
+        : decision.reason,
+      error: result.ok ? undefined : `steps failed: ${result.failedTools.join(', ')}`,
+      steps: stepsOf(result),
+    };
+  }
+
+  private async runSlow(text: string, reason: string, tier: string, llmCallsSoFar = 0): Promise<TierOutcome> {
+    const host = this.options.host;
+    if (host === undefined) {
+      return { tier: 'slow', needsConfirmation: false, confirmed: null, llmCalls: llmCallsSoFar, ok: false, reason, error: 'no slow-thinking host configured', steps: [] };
+    }
+    const result = await host.think({ prompt: text });
+    return {
+      tier: tier === 'slow' ? 'slow' : `${tier}->slow`,
+      needsConfirmation: false,
+      confirmed: null,
+      llmCalls: llmCallsSoFar + result.llmCalls,
+      ok: result.ok,
+      reason,
+      error: result.error,
+      steps: [],
+      text: result.text,
+    };
+  }
+
+  // --- state ---------------------------------------------------------------
+
+  private baseVars(event: Event, slots: Readonly<Record<string, string>>): VarBag {
+    return { event_text: eventText(event), event_kind: event.kind, event_source: event.source, trace_id: event.traceId, ...slots };
+  }
+
+  private trustFor(subjectId: string, origin: 'authored' | 'promoted'): TrustState {
+    return this.trust.get(subjectId) ?? initialTrust(subjectId, origin, this.options.trust);
+  }
+
+  private saveTrust(state: TrustState): void {
+    this.trust = new Map(this.trust).set(state.subjectId, state);
+    this.options.registry.saveTrust(state);
+  }
+
+  /** Persist a candidate and promote it when both gates agree. */
+  private remember(candidate: PlanCandidate): void {
+    const readiness = promotionReadiness(candidate, this.trustFor(candidate.planId, 'promoted'), this.options.promotion);
+    const promoted = readiness.rule ? { ...candidate, promoted: true } : candidate;
+    this.candidates = [...this.candidates.filter((existing) => existing.planId !== promoted.planId), promoted];
+    this.options.registry.saveCandidate(promoted);
+    if (!readiness.rule) return;
+    const scenario = toScenario(promoted);
+    this.scenarios = [...this.scenarios.filter((existing) => existing.id !== scenario.id), scenario];
+    this.options.registry.saveScenario(scenario);
+  }
+
+  /** The manual promotion track, used by `we promote <id>`. */
+  promote(planId: string): { readonly ok: boolean; readonly reason: string } {
+    const candidate = this.candidates.find((existing) => existing.planId === planId);
+    if (candidate === undefined) return { ok: false, reason: `no plan candidate '${planId}'` };
+    const readiness = promotionReadiness(candidate, this.trustFor(planId, 'promoted'), this.options.promotion);
+    if (!readiness.manual) return { ok: false, reason: readiness.reason };
+    const promoted = { ...candidate, promoted: true };
+    const scenario = toScenario(promoted);
+    this.candidates = [...this.candidates.filter((existing) => existing.planId !== planId), promoted];
+    this.scenarios = [...this.scenarios.filter((existing) => existing.id !== scenario.id), scenario];
+    this.options.registry.saveCandidate(promoted);
+    this.options.registry.saveScenario(scenario);
+    return { ok: true, reason: `promoted '${planId}' to a scenario` };
+  }
+
+  knownScenarios(): readonly Scenario[] {
+    return this.scenarios;
+  }
+
+  knownCandidates(): readonly PlanCandidate[] {
+    return this.candidates;
+  }
+}
+
+interface TierOutcome {
+  readonly tier: string;
+  readonly scenarioId?: string | undefined;
+  readonly planId?: string | undefined;
+  readonly needsConfirmation: boolean;
+  readonly confirmed: boolean | null;
+  readonly llmCalls: number;
+  readonly ok: boolean;
+  readonly reason: string;
+  readonly error?: string | undefined;
+  readonly steps: readonly TrajectoryStep[];
+  /** Prose the slow tier produced, if it ran. Empty on every other path. */
+  readonly text?: string | undefined;
+}
+
+/** Template vars a chain needs that the daemon cannot supply by itself. */
+function openVars(scenario: Scenario): readonly string[] {
+  return requiredVars(scenario.chain).filter((name) => !RESERVED_VARS.has(name));
+}
+
+function chainAsScenario(candidate: PlanCandidate): Scenario {
+  return {
+    id: candidate.planId,
+    name: candidate.intent,
+    description: candidate.description,
+    triggers: candidate.sourceQueries,
+    kinds: candidate.kinds,
+    chain: candidate.chain,
+    onFailure: 'fail_fast',
+    origin: 'promoted',
+  };
+}
+
+function verdict(confirmed: boolean, ok: boolean): TrustOutcome {
+  if (confirmed) return ok ? 'confirmed_success' : 'confirmed_failure';
+  return ok ? 'auto_success' : 'auto_failure';
+}

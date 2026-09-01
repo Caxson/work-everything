@@ -1,0 +1,192 @@
+# TODO
+
+Everything known to be missing or provisional in this skeleton lives here.
+
+## Perception
+
+- Feishu is implemented; Claude Code is still an interface without one.
+- The Feishu reader only sees what is rendered. The message list is virtualized,
+  so a burst that arrives while the daemon is busy can scroll out of the tree
+  before the next sweep; nothing scrolls back to recover it.
+- Group chats are untested. A group message's sender is left empty rather than
+  guessed, because the layout that exposes it was never observed.
+- Only text is read. A file, image or card message arrives as its rendered
+  label, and there is no way to reply with anything but text.
+- Perception stops dead when Feishu is closed to the tray or the screen is
+  locked: with no window the app exposes no accessibility tree. The daemon
+  reports this instead of failing quietly, and it cannot work around it —
+  reading Feishu means reading its window. Acting is handled: anything that
+  touches a window is deferred while the screen is locked and vetted before it
+  runs (see `we queue`). Sources that are not read through a window are
+  unaffected.
+- `AxPerceiver` watches by bundle id at startup. It does not notice an app
+  launching, quitting, or changing pid afterwards.
+- Every AX notification becomes one event. There is no debounce, so a chatty
+  app can flood the router.
+
+## Routing
+
+- The prefilter is lexical only. `Retriever` is the seam for an embedding
+  ranker; nothing implements it yet, so a request that shares no surface
+  tokens with a scenario will not reach it.
+- `muscleThreshold` was picked by hand. It should be calibrated against
+  recorded trajectories once there are enough of them.
+- The router cannot fill template variables, so any chain with an open slot
+  is demoted to the fast tier and costs a model call. Recovering slot values
+  by aligning an event against a stored anchor would make more promoted
+  scenarios genuinely free; it is not implemented.
+
+## Planning and promotion
+
+- Generated plans are linear. The engine executes parallel groups and
+  conditional steps, but the planner never emits them.
+- Candidate matching compares against every stored anchor. That is fine at
+  hundreds of candidates and should be indexed before it is thousands.
+- Nothing prunes candidates. They accumulate until promoted or deleted by
+  hand; there is no eviction policy and no `we forget`.
+
+## Trust
+
+- Confirmation is a callback with no interface behind it. There is no way for
+  a person to actually answer one — `we status` shows what is pending and
+  nothing consumes the answer. The Feishu write-back gate sidesteps this by
+  printing and recording an unapproved reply rather than asking for one.
+- Quarantine is permanent until `reinstate`, which no command calls yet.
+
+## Execution and hosts
+
+- The only executor is `shell`. Tools must be declared in config with a fixed
+  argv; there is no HTTP executor and no MCP client.
+- `ClaudeCodeHost` sends a bare prompt. It passes no context from the
+  trajectory, and it starts a fresh session every time.
+
+## Operations
+
+- `we run --source feishu` starts the daemon in the foreground. There is no
+  service definition, no restart policy, and no log rotation.
+- The database is never compacted or pruned.
+- `we replay` re-derives the routing decision only. It does not re-execute a
+  chain against recorded tool results.
+
+## A locked screen removes window addressing
+
+Measured on macOS 26.3: while the Mac is locked, `AXPosition`, `AXSize` and
+`_AXUIElementGetWindow` fail for every application. The event channel itself
+survives, and `CGWindowList` still answers, so a window can be reached if its
+number is already known — but nothing can find that number through the
+accessibility API.
+
+This sits directly under the premise of the project. A computer left to work
+on its own is a locked computer, and that is precisely when addressing stops
+working. Unresolved. Directions worth measuring, none of them verified:
+
+- address windows through `CGWindowList` instead, and act by window number
+- hold the session awake (`caffeinate`) and treat the display, not the
+  session, as the thing that sleeps
+- accept it: perceive while locked, queue anything that acts, run it on unlock
+
+Whichever way this lands, it belongs in the trust gate too — a queued action
+that runs much later is not the action the user confirmed.
+
+See `research/09-bg-gate-result.md` §0.
+
+## Unmeasured, blocked by the same lock
+
+The gate run locked itself partway through, leaving three things untested:
+the AX parsing chain end to end, whether focus suppression (L3) is needed at
+all, and whether a CEF app exposes its web tree once activated in the
+background. Re-run unlocked: `spikes/bg-gate/run-gate.sh`.
+
+## Rules the executor must follow (measured, not guessed)
+
+From `research/09-bg-gate-result.md`. Each of these silently produces a wrong
+answer if ignored.
+
+**A CEF tree is built by the act of reading it, per client, and it decays.**
+The first traversal from a given process returns a stub — often the menu bar
+alone, which is three hundred nodes and looks like a real tree. Read again.
+Every new process pays this, not just the first one ever.
+
+- Do not sleep a fixed interval and assume readiness. Poll until a web area
+  appears, then proceed; time out with an error rather than acting on a stub.
+- Judge readiness by the number of `AXWebArea` hits, never by total node count.
+  A menu bar alone clears any plausible node threshold.
+- Do not assert `AXManualAccessibility` or `AXEnhancedUserInterface` as a
+  precondition. Both are refused on macOS 26.3 and the tree arrives anyway.
+
+**A locked screen fails silently, and looks exactly like an app with no
+windows.** `AXWindows` returns the right count, but every entry is the
+application element itself. Check for this explicitly — `CFEqual(entry, app)` —
+and stop with a clear error. Without the check, a locked Mac reads as "this app
+has no window" and the caller retries forever against something that cannot
+recover on its own.
+
+## Writing into a composer
+
+Measured on a `contenteditable` built to imitate Feishu's, judged by the events
+the page itself reported rather than by reading the value back:
+
+`AXValue`, `AXFocused`, `AXSelectedTextRange`, `AXSelectedText`, `AXPress` and
+`AXConfirm` all returned success. Not one of them produced a `beforeinput` or
+an `input`. The text was there on read-back and the page never knew — which for
+a controlled editor means the app's own state never updated, and the message
+that looks typed is not typed at all.
+
+What worked: **press to focus, then send keys to the process**. The page
+reported the full sequence — `keydown`, `keypress`, `beforeinput`, `textInput`,
+`input` — with the frontmost application unchanged and the cursor still.
+
+A plain `<input>` accepts `AXValue` normally, so this is what a contenteditable
+is, not a mistake in how it was addressed.
+
+So: reading and clicking go through public accessibility; **writing into a
+composer needs the private path**. It is not a fallback for Feishu, it is the
+only way in. An executor that silently falls back to `setValue` here will
+report success and send nothing.
+
+## Three ways a window disappears without an error
+
+Each one looks like "this app has no window" and each has a different remedy.
+Code that cannot tell them apart will retry forever against one of them.
+
+1. **Locked screen** — `AXWindows` has the right count, every entry is the
+   application element itself (`CFEqual(entry, app)`). Only a person can undo
+   this.
+2. **Cold accessibility client** — a CEF app's first traversal returns a stub,
+   often the menu bar alone at ~300 nodes. Read again, in the same process,
+   polling for a web area.
+3. **Window never reached the screen** — `AXWindows` returns *success* with a
+   count of zero while `CGWindowList(.optionAll)` shows the windows and
+   `.optionOnScreenOnly` shows none. System-wide the on-screen count collapses
+   to single digits. `orderFrontRegardless()` does not fix it; it is the
+   desktop's state, not the app's.
+
+Before trusting any window-addressed run, launch a probe window and assert that
+accessibility can see it. Checking `CGSSessionScreenIsLocked` alone is not
+enough — case 3 happens with the screen unlocked.
+
+## Occlusion does not matter; minimising is not ours to do
+
+A covered window still answers in full. With a probe window sitting on top of
+Chrome — confirmed by the window server's own z-order, not by hit-testing —
+the tree came back at 49 nodes and one web area, identical to the uncovered
+baseline. The machine had Stage Manager on at the time, with Chrome shrunk to a
+thumbnail: more thoroughly out of sight than any overlap, and the tree was
+still whole.
+
+So a person can bury the window an agent is working in and nothing breaks.
+That is what makes "work while the human works" hold in practice.
+
+`AXUIElementCopyElementAtPosition` cannot be used to decide what is on top:
+Chromium answers `notImplemented`, so a hit on Chrome and a failed hit look
+identical. Ask the window server instead.
+
+Minimising is the opposite story. `AXMinimized` reports settable, the write
+returns success, and the window stays where it is; pressing `AXMinimizeButton`
+behaves the same. Probably Stage Manager owning that gesture. **Do not design a
+sequence that minimises or restores a window** — it cannot be relied on.
+
+And one action to keep well away from the others: pressing a window-management
+control **moved the frontmost application**, where pressing a button inside a
+page did not. Window chrome and page content are not the same class of action,
+whatever the API suggests.

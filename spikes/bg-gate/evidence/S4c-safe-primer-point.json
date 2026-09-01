@@ -1,0 +1,83 @@
+{
+  "actions" : [
+
+  ],
+  "activation" : {
+    "appKitPrimer" : true,
+    "centerPrimer" : {
+      "field40" : true,
+      "field51" : true,
+      "field58" : true,
+      "field91" : true,
+      "field92" : true,
+      "point" : [
+        1150,
+        635
+      ],
+      "quartz" : [
+        450,
+        250
+      ],
+      "windowLocationApplied" : true
+    },
+    "frontmostAfterActivate" : {
+      "activeApp" : "loginwindow",
+      "activePID" : 406,
+      "cursor" : [
+        223.41796875,
+        975.96484375
+      ],
+      "frontmost" : "loginwindow",
+      "frontmostPID" : 406
+    }
+  },
+  "after" : {
+    "activeApp" : "loginwindow",
+    "activePID" : 406,
+    "cursor" : [
+      223.41796875,
+      975.96484375
+    ],
+    "cursorDelta" : 0,
+    "frontmost" : "loginwindow",
+    "frontmostPID" : 406
+  },
+  "baseline" : {
+    "activeApp" : "loginwindow",
+    "activePID" : 406,
+    "cursor" : [
+      223.41796875,
+      975.96484375
+    ],
+    "frontmost" : "loginwindow",
+    "frontmostPID" : 406
+  },
+  "frontmostUnchanged" : true,
+  "label" : "S4c",
+  "options" : {
+    "f40" : true,
+    "f51_58" : true,
+    "f91_92" : true,
+    "windowLocation" : true
+  },
+  "spi" : {
+    "axGetWindow" : true,
+    "axObserverRemote" : false,
+    "setWindowLocation" : true
+  },
+  "target" : {
+    "frame" : [
+      700,
+      385,
+      520,
+      332
+    ],
+    "index" : -1,
+    "isFocused" : false,
+    "isMain" : false,
+    "pid" : 69191,
+    "resolvedBy" : "forced",
+    "title" : "(forced)",
+    "windowNumber" : 95461
+  }
+}

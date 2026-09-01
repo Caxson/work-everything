@@ -1,0 +1,24 @@
+{
+  "after" : {
+    "activeApp" : "loginwindow",
+    "activePID" : 406,
+    "cursor" : [
+      223.41796875,
+      975.96484375
+    ],
+    "frontmost" : "loginwindow",
+    "frontmostPID" : 406
+  },
+  "before" : {
+    "activeApp" : "loginwindow",
+    "activePID" : 406,
+    "cursor" : [
+      223.41796875,
+      975.96484375
+    ],
+    "frontmost" : "loginwindow",
+    "frontmostPID" : 406
+  },
+  "error" : "",
+  "launchedPID" : 75013
+}
