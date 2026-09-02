@@ -16,6 +16,11 @@ struct ResolvedWindow {
     let isMinimized: Bool
     let layer: Int
     let cgTitle: String
+    /// Which attribute this window came out of. `AXWindows` is the whole list; anything
+    /// else means that attribute was empty and this is the one window the singular
+    /// attributes could still name — so a caller that needs *all* of an application's
+    /// windows knows it did not get them.
+    let listedBy: String
 
     /// Background dispatch needs a window number; `windowLocation` additionally needs a
     /// frame. A window without a number cannot be addressed at all.
@@ -28,6 +33,7 @@ struct ResolvedWindow {
             "title": .string(title),
             "windowNumber": .int(windowNumber),
             "resolvedBy": .string(resolvedBy),
+            "listedBy": .string(listedBy),
             "addressable": .bool(addressable),
             "isMain": .bool(isMain),
             "isFocused": .bool(isFocused),
@@ -128,6 +134,10 @@ enum WindowResolver {
     /// * `NO_WINDOW` — there genuinely is no window. A menu-bar agent, or an application
     ///   closed to the tray.
     ///
+    /// Before any of that, an empty `AXWindows` is asked a second question rather than
+    /// diagnosed — see `unlistedWindows`. Most of what used to reach the diagnosis was an
+    /// application on a Space nobody was looking at, which is answerable.
+    ///
     /// The classification runs on the **unfiltered** census. Filtering first would remove
     /// the placeholders that are the entire evidence for the first case, and a locked Mac
     /// would arrive here as a harmless empty array.
@@ -138,10 +148,18 @@ enum WindowResolver {
         if ScreenLock.windowsAreSubstituted(census: census) {
             throw BridgeError.screenLocked(detectedBy: "windowSubstitution")
         }
-        let elements = census.real
+        var elements = census.real
+        var listedBy = "AXWindows"
+        if elements.isEmpty {
+            let recovered = unlistedWindows(app: app)
+            if !recovered.isEmpty {
+                elements = recovered.map { $0.element }
+                listedBy = recovered[0].attribute
+            }
+        }
         guard !elements.isEmpty else { throw diagnoseEmpty(pid: pid, census: census) }
         let candidates = cgWindows(pid: pid)
-        let mainNumber = elements.isEmpty ? 0 : mainWindowNumber(app: app)
+        let mainNumber = mainWindowNumber(app: app)
         return elements.enumerated().map { index, window in
             let frame = self.frame(of: window)
             let title = window.string(kAXTitleAttribute) ?? ""
@@ -157,9 +175,50 @@ enum WindowResolver {
                 isFocused: window.bool(kAXFocusedAttribute),
                 isMinimized: window.bool(kAXMinimizedAttribute),
                 layer: resolved.entry?.layer ?? 0,
-                cgTitle: resolved.entry?.name ?? ""
+                cgTitle: resolved.entry?.name ?? "",
+                listedBy: listedBy
             )
         }
+    }
+
+    /// The windows `AXWindows` declines to list.
+    ///
+    /// Measured on macOS 26.3: `kAXWindowsAttribute` is filtered by **active-Space
+    /// membership**, uniformly and regardless of toolkit. With a full-screen Space active,
+    /// every application whose windows live on another Space answers success with an empty
+    /// array — 终端 (AppKit, 6 windows), 访达 (26), 备忘录, 计算器 and 飞书 (CEF) alike —
+    /// while the one application on the active Space answers normally. Minutes later, with
+    /// the ordinary desktop current, those same applications answered normally and it was
+    /// Chrome, by then alone on its full-screen Space, that answered empty. Both directions,
+    /// same probe.
+    ///
+    /// `AXMainWindow` and `AXFocusedWindow` are not filtered. Throughout the same readings
+    /// they returned live elements with correct geometry — 飞书's read 1397x937 at
+    /// (125,105) while its Space was inactive, which activating the application later
+    /// confirmed to the pixel — and `SPI.windowNumber` resolves them to the real window
+    /// number, which is what background dispatch addresses. So a Space the person is not
+    /// looking at is not a state to wait out. It was one attribute too few.
+    ///
+    /// This recovers one window per application, not all of them; that is the honest limit
+    /// of the public attributes and it is why callers are told which one answered.
+    ///
+    /// A locked screen substitutes here too — `AXMainWindow` hands back the *application*
+    /// element with window id 0 — so the self-equality guard is not optional, and the role
+    /// is read rather than assumed. An application with genuinely no window (a menu-bar
+    /// agent, one closed to the tray) answers neither attribute, which is what keeps
+    /// `NO_WINDOW` reachable.
+    private static func unlistedWindows(app: AXElement) -> [(element: AXElement, attribute: String)] {
+        var found: [(element: AXElement, attribute: String)] = []
+        for attribute in [kAXMainWindowAttribute, kAXFocusedWindowAttribute] {
+            guard let raw = app.copy(attribute), CFGetTypeID(raw) == AXUIElementGetTypeID() else { continue }
+            let candidate = raw as! AXUIElement
+            guard !CFEqual(candidate, app.ref) else { continue }
+            guard !found.contains(where: { CFEqual($0.element.ref, candidate) }) else { continue }
+            let element = AXElement(candidate)
+            guard element.string(kAXRoleAttribute) == kAXWindowRole as String else { continue }
+            found.append((element, attribute))
+        }
+        return found
     }
 
     private static func mainWindowNumber(app: AXElement) -> Int {

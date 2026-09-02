@@ -174,6 +174,10 @@ enum Dispatcher {
         node["index"] = .int(window.index)
         node["windowNumber"] = .int(window.windowNumber)
         node["resolvedBy"] = .string(window.resolvedBy)
+        // Not decoration: anything other than `AXWindows` means that attribute was empty
+        // and this is the single window the singular attributes could still name, so a
+        // caller wanting every window of the application did not get them.
+        node["listedBy"] = .string(window.listedBy)
         node["addressable"] = .bool(window.addressable)
         return .object(node)
     }

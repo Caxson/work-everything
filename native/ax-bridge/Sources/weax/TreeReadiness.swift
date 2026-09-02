@@ -21,6 +21,15 @@ struct TreeReadiness {
     struct Census {
         var nodes = 0
         var webAreas = 0
+        /// Web areas with something under them.
+        ///
+        /// A web area can exist and be empty, and that is not a rare shape: measured with
+        /// 飞书's window on a Space nobody was looking at, its window subtree held two
+        /// `AXWebArea` nodes inside sixty-four nodes of shell — no conversation, no
+        /// composer, no messages — while the same application on the active Space exposes
+        /// the lot. `webAreas > 0` called that ready, which is the same class of mistake as
+        /// judging by node count: a signal that is present without the thing it stands for.
+        var populatedWebAreas = 0
         var truncated = false
     }
 
@@ -47,12 +56,17 @@ struct TreeReadiness {
             }
             guard seen.insert(Key(ref: element.ref)).inserted else { return }
             census.nodes += 1
-            if element.string(kAXRoleAttribute) == webAreaRole { census.webAreas += 1 }
+            let isWebArea = element.string(kAXRoleAttribute) == webAreaRole
+            if isWebArea { census.webAreas += 1 }
             guard depth < maxDepth else {
                 census.truncated = true
                 return
             }
-            for child in element.children() { walk(child, depth + 1) }
+            // Read once: `children()` is a round trip to the target process, and the
+            // populated check and the walk both want the same answer.
+            let children = element.children()
+            if isWebArea, !children.isEmpty { census.populatedWebAreas += 1 }
+            for child in children { walk(child, depth + 1) }
         }
 
         for root in roots { walk(root, 0) }
@@ -74,18 +88,25 @@ struct TreeReadiness {
             let roots = try TreeDumper.roots(app: app, windowIndex: windowIndex)
             last = census(roots: roots, maxNodes: maxNodes, maxDepth: maxDepth)
             polls += 1
-            if last.webAreas > 0 {
+            if last.populatedWebAreas > 0 {
                 return report(last, polls: polls, since: started, ready: true)
             }
             if Date() >= deadline { break }
             usleep(UInt32(max(1, pollMs) * 1000))
         } while Date() < deadline
 
+        // The two failures are told apart because they mean different things to a caller:
+        // no web area at all is a tree that has not been built, while an empty one is a
+        // tree that has been built around content the application is not exposing.
+        let detail = last.webAreas == 0
+            ? "no \(webAreaRole) appeared"
+            : "\(last.webAreas) \(webAreaRole)(s) appeared and every one of them is empty"
         throw BridgeError(
             code: "TREE_NOT_READY",
-            message: "no \(webAreaRole) appeared within \(timeoutMs)ms after \(polls) traversal(s); "
-                + "the last saw \(last.nodes) node(s). A count in the hundreds with no web area is the "
-                + "menu bar alone — the window's web content has not been built",
+            message: "\(detail) within \(timeoutMs)ms after \(polls) traversal(s); the last saw "
+                + "\(last.nodes) node(s). A count in the hundreds with no web area is the menu bar "
+                + "alone; a web area with nothing under it is the window's shell without its "
+                + "content, which is what an application whose window is on another Space exposes",
             details: report(last, polls: polls, since: started, ready: false))
     }
 
@@ -94,6 +115,7 @@ struct TreeReadiness {
             "ready": .bool(ready),
             "nodes": .int(census.nodes),
             "webAreas": .int(census.webAreas),
+            "populatedWebAreas": .int(census.populatedWebAreas),
             "truncated": .bool(census.truncated),
             "polls": .int(polls),
             "elapsedMs": .int(Int(Date().timeIntervalSince(since) * 1000))
