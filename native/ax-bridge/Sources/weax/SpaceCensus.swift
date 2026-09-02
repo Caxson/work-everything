@@ -79,12 +79,15 @@ enum SpaceCensus {
 
     // MARK: - Public signal
 
+    /// Read through `AXElement.application`, not a bare `AXUIElementCreateApplication`,
+    /// because that is what carries the messaging timeout. This runs inside `diagnoseEmpty`,
+    /// which a poll reaches every few seconds, and it asks *the frontmost application* —
+    /// so a hung foreground app would otherwise block every diagnosis behind it, including
+    /// the ones about a different process entirely.
     private static func frontmostWindowIsFullScreen(_ app: NSRunningApplication?) -> Bool {
         guard let pid = app?.processIdentifier else { return false }
-        let element = AXUIElementCreateApplication(pid)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &value) == .success,
-              let windows = value as? [AXUIElement] else { return false }
+        guard let windows = AXElement.application(pid: pid).copy(kAXWindowsAttribute as String) as? [AXUIElement]
+        else { return false }
         return windows.contains { window in
             var flag: CFTypeRef?
             guard AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &flag) == .success
@@ -103,13 +106,22 @@ enum SpaceCensus {
     private typealias ConnectionFn = @convention(c) () -> Int32
     private typealias CopySpacesFn = @convention(c) (Int32) -> CFArray?
 
-    private static func managedSpaces() -> (count: Int, currentType: Int?)? {
+    /// Resolved once. `diagnoseEmpty` runs on a poll, and looking the symbols up every time
+    /// would take a handle reference per call for an answer that cannot change while the
+    /// process lives. `nil` here means this macOS does not vend them, which is a permanent
+    /// fact about the machine and is why it is safe to cache.
+    private static let symbols: (connection: ConnectionFn, copy: CopySpacesFn)? = {
         guard let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
               let connectionSymbol = dlsym(handle, "_CGSDefaultConnection"),
               let copySymbol = dlsym(handle, "CGSCopyManagedDisplaySpaces") else { return nil }
-        let connection = unsafeBitCast(connectionSymbol, to: ConnectionFn.self)()
-        guard let displays = unsafeBitCast(copySymbol, to: CopySpacesFn.self)(connection) as? [[String: Any]]
-        else { return nil }
+        return (unsafeBitCast(connectionSymbol, to: ConnectionFn.self),
+                unsafeBitCast(copySymbol, to: CopySpacesFn.self))
+    }()
+
+    private static func managedSpaces() -> (count: Int, currentType: Int?)? {
+        guard let symbols else { return nil }
+        let connection = symbols.connection()
+        guard let displays = symbols.copy(connection) as? [[String: Any]] else { return nil }
 
         var total = 0
         var currentType: Int?

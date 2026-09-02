@@ -141,12 +141,21 @@ check "a multi-kilobyte reply arrives" "true" "$(q '.appsReplied')"
 
 # 4 — handles are per connection. Both clients hold nodeId 1 and they are different
 #     elements; a shared registry would make one of these titles the other's.
-if [ "$(q '.aRootNodeId')" = "NOT_TRUSTED" ]; then
-  printf 'skip handle isolation: this bridge is not trusted for Accessibility\n'
-else
-  check "each client mints nodeId 1"      "1,1"  "$(q '[.aRootNodeId,.bRootNodeId]|join(",")')"
-  check "nodeId 1 means different things" "true" "$(q '.handlesResolveApart')"
-fi
+#
+#     Two reasons this cannot run, and both are about the machine rather than the code:
+#     no Accessibility grant, and a locked screen, which answers every window request
+#     with SCREEN_LOCKED so there is no element to mint a handle for. Everything above
+#     and below is unaffected by either, which is why only this section steps aside
+#     instead of the whole suite.
+case "$(q '.aRootNodeId')" in
+  NOT_TRUSTED)
+    printf 'skip handle isolation: this bridge is not trusted for Accessibility\n' ;;
+  SCREEN_LOCKED)
+    printf 'skip handle isolation: the screen is locked, so no window has an element\n' ;;
+  *)
+    check "each client mints nodeId 1"      "1,1"  "$(q '[.aRootNodeId,.bRootNodeId]|join(",")')"
+    check "nodeId 1 means different things" "true" "$(q '.handlesResolveApart')" ;;
+esac
 
 # 5 — shutdown ends one client, not the service.
 check "shutdown is acknowledged"        "true" "$(q '.shutdownAck')"

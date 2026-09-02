@@ -18,6 +18,19 @@ OUT_DIR="${OUT_DIR:-${TMPDIR:-/tmp}/we-ax-background}"
 mkdir -p "$OUT_DIR"
 [ -x "$BIN" ] || { echo "missing $BIN — run: swift build -c release" >&2; exit 1; }
 
+# A locked screen fails most of this suite, and the failures say nothing about the code:
+# accessibility substitutes the application element for every window, so the very first
+# step — minting a handle against a real application — returns SCREEN_LOCKED and every
+# assertion downstream reads null. Twenty-two failures that all mean "the Mac is locked"
+# are worse than no run at all, because somebody has to spend a cycle finding that out.
+# So say it once and stop, the way live-probe.py already does.
+LOCKED=$(printf '{"id":1,"op":"env"}\n' | "$BIN" 2>/dev/null | jq -r '.result.screen.locked // "unknown"')
+if [ "$LOCKED" = "true" ]; then
+  echo "SKIPPED: the screen is locked, and accessibility answers for no window while it is."
+  echo "         Nothing here is broken; unlock the Mac and run it again."
+  exit 0
+fi
+
 PASS=0; FAIL=0
 check() {
   if [ "$2" = "$3" ]; then PASS=$((PASS+1)); printf 'ok   %s\n' "$1"

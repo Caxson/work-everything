@@ -300,7 +300,21 @@ describe('the four reasons an app exposes no window', () => {
     }
   });
 
-  it('never escalates a diagnosed cause to wedged, however many times it repeats', () => {
+  it('never escalates one of these machine states to wedged: restarting Feishu fixes none of them', () => {
+    // Not an oversight and not a general rule about diagnosed causes. `wedged`
+    // prescribes exactly one remedy — restart Feishu — and none of these is
+    // fixed by restarting anything: a lock needs a person, a full-screen Space
+    // needs a person, and an application whose windows are not being drawn is
+    // not broken. Escalating any of them sends somebody to restart a working
+    // app, which is the mistake this file's screen-saver history is about.
+    //
+    // The scope is worth stating: the wedge the spike actually observed
+    // (`spikes/README.md` #8 — `AXWindows` returning the AXApplication element
+    // itself while the real window is on screen) never arrives here as any of
+    // these, because the bridge answers that census with `SCREEN_LOCKED`
+    // (`ScreenLock.windowsAreSubstituted`). What reaches `wedged` from here is
+    // the other measured shape: addressable windows with no `AXWebArea` in
+    // them, repeatedly.
     for (const diagnosis of [
       { code: 'SCREEN_LOCKED' },
       { code: 'NO_WINDOW' },
