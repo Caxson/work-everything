@@ -24,21 +24,21 @@ enum Actions {
     }
 
     static func setValue(nodeId: Int, value: JSONValue) throws -> JSONValue {
-        let element = AXElement(try ElementRegistry.shared.element(for: nodeId))
+        let element = AXElement(try ElementRegistry.current.element(for: nodeId))
         let err = element.setAttribute(kAXValueAttribute, try JSONCoercion.toCF(value))
         guard err == .success else { throw BridgeError.ax(err, "setValue on node \(nodeId)") }
         return .object(["nodeId": .int(nodeId), "ok": .bool(true)])
     }
 
     static func press(nodeId: Int, action: String) throws -> JSONValue {
-        let element = AXElement(try ElementRegistry.shared.element(for: nodeId))
+        let element = AXElement(try ElementRegistry.current.element(for: nodeId))
         let err = element.perform(action)
         guard err == .success else { throw BridgeError.ax(err, "perform \(action) on node \(nodeId)") }
         return .object(["nodeId": .int(nodeId), "action": .string(action), "ok": .bool(true)])
     }
 
     static func focus(nodeId: Int) throws -> JSONValue {
-        let element = AXElement(try ElementRegistry.shared.element(for: nodeId))
+        let element = AXElement(try ElementRegistry.current.element(for: nodeId))
         let err = element.setAttribute(kAXFocusedAttribute, kCFBooleanTrue)
         guard err == .success else { throw BridgeError.ax(err, "focus node \(nodeId)") }
         return .object(["nodeId": .int(nodeId), "ok": .bool(true)])

@@ -36,6 +36,8 @@ echo "dry-run pid=$PID (no events are posted)"
   printf '{"id":4,"op":"keystroke","pid":%s,"key":"return","modifiers":["cmd","shift"],"dryRun":true}\n' "$PID"
   printf '{"id":5,"op":"keystroke","pid":%s,"key":"中","dryRun":true}\n' "$PID"
   printf '{"id":6,"op":"keystroke","pid":%s,"key":"中","modifiers":["cmd"],"dryRun":true}\n' "$PID"
+  printf '{"id":10,"op":"keystroke","pid":%s,"key":"end","dryRun":true}\n' "$PID"
+  printf '{"id":11,"op":"keystroke","pid":%s,"key":"right","modifiers":["cmd"],"dryRun":true}\n' "$PID"
   printf '{"id":7,"op":"click","x":100,"y":200,"dryRun":true}\n'
   printf '{"id":8,"op":"click","x":100,"y":200,"clickCount":9,"dryRun":true}\n'
   printf '{"id":9,"op":"click","dryRun":true}\n'
@@ -75,6 +77,16 @@ check "cmd+shift+return: peak flags"       "0x120000" "$(q 4 '.result.plan.event
 check "unicode key: mode"                  "unicode" "$(q 5 '.result.plan.mode')"
 check "unicode key: flags 0"               "0"       "$(q 5 '[.result.plan.events[].flags]|unique|@csv' | tr -d '"')"
 check "unicode + modifier is refused"      "BAD_REQUEST" "$(q 6 '.error.code')"
+
+# 6b — the two keys `focusAndType` uses to put a caret back at the end of a composer.
+#      Neither is universal — measured, `End` moves the caret in Chromium and does nothing
+#      but scroll in the Cocoa text system, where `Cmd`+`Right` is the one that moves it —
+#      so both are sent in order and checked. Their keycodes are pinned here because a
+#      silently wrong one would look exactly like "the fix does not work".
+check "end is keycode 119"                 "119" "$(q 10 '.result.plan.events[0].keyCode')"
+check "end carries no modifier"            "0"   "$(q 10 '[.result.plan.events[].flags]|unique|@csv' | tr -d '"')"
+check "cmd+right is keycode 124"           "124" "$(q 11 '.result.plan.events[1].keyCode')"
+check "cmd+right releases cmd"             "0"   "$(q 11 '.result.plan.events[-1].flags')"
 
 # 7 — mouse is the mirror image: it must go to the global HID tap (spike #1).
 check "click targets the HID tap"          "cghidEventTap" "$(q 7 '.result.plan.tap')"

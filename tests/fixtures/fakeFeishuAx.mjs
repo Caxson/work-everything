@@ -213,7 +213,20 @@ function windows(request) {
         screenSaverOnScreen: false,
         axWindows: { entries: 0, selfEqual: 0, real: 0, nonElement: 0 },
       },
-      SAVER_ON_SCREEN: { cgWindows: 5, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop', screenSaverOnScreen: true },
+      SAVER_ON_SCREEN: { cgWindows: 5, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'application', screenSaverOnScreen: true },
+      // The measured full-screen payload: Chrome full-screen on one display,
+      // 飞书 on the Space behind it. The desktop is compositing 3 windows from
+      // 1 process, which is why the owner count is evidence for nothing.
+      FULLSCREEN_SPACE: {
+        cgWindows: 6,
+        onScreen: 0,
+        desktopOnScreen: 3,
+        desktopOwnersOnScreen: 1,
+        scope: 'application',
+        screenSaverOnScreen: false,
+        space: { fullScreen: true, evidence: ['AXFullScreen', 'currentSpaceType=4'], spaces: 3, currentSpaceType: 4, frontmostApp: 'Google Chrome' },
+        axWindows: { entries: 0, selfEqual: 0, real: 0, nonElement: 0 },
+      },
     }[diagnosis];
     const code = ['DESKTOP_BLANK', 'NOT_DRAWN', 'SAVER_ON_SCREEN'].includes(diagnosis) ? 'AX_SEES_NO_WINDOWS_BUT_CG_DOES' : diagnosis;
     const body = { code, message: `fake ${diagnosis}`, ...(details === undefined ? {} : { details }) };

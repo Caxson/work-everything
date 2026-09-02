@@ -145,7 +145,7 @@ program
 
 program
   .command('queue')
-  .description('actions held because the screen was locked, and the ones that never ran')
+  .description('actions held because the screen could not be driven, and the ones that never ran')
   .option('--discarded', 'show what was dropped instead of what is waiting')
   .option('-n, --limit <count>', 'how many discarded actions to show', '20')
   .action((options: { discarded?: boolean; limit: string }) => {
@@ -170,7 +170,7 @@ program
     const pending = queue.pending();
     console.log(`db: ${config.dbPath}`);
     if (!config.queue.enabled) {
-      console.log('queue.enabled is false: a locked screen fails actions instead of holding them.');
+      console.log('queue.enabled is false: a screen that cannot be driven fails actions instead of holding them.');
       if (pending.length > 0) {
         console.log(`  ${pending.length} action(s) queued by an earlier run are still here; they will be dropped as they expire, and none will be sent.`);
       }

@@ -23,7 +23,7 @@ enum InputOps {
             throw BridgeError.badRequest("click needs either 'nodeId' or both 'x' and 'y'")
         }
         guard background else {
-            let point = try node.map { try Mouse.center(of: AXElement(try ElementRegistry.shared.element(for: $0))) }
+            let point = try node.map { try Mouse.center(of: AXElement(try ElementRegistry.current.element(for: $0))) }
                 ?? explicit!
             return try Mouse.click(at: point, button: request.string("button") ?? "left",
                                    clickCount: request.int("clickCount", default: 1),
@@ -31,7 +31,7 @@ enum InputOps {
         }
 
         let aim = try BackgroundOps.aim(request)
-        let point = try node.map { try Mouse.center(of: AXElement(try ElementRegistry.shared.element(for: $0))) }
+        let point = try node.map { try Mouse.center(of: AXElement(try ElementRegistry.current.element(for: $0))) }
             ?? explicit!
         let spec = try button(request)
         let clickCount = request.int("clickCount", default: 1)
@@ -142,7 +142,7 @@ enum InputOps {
     /// background scroll, where the window is already known — the middle of the window.
     private static func point(_ request: Request, aim: Aim?) throws -> CGPoint {
         if let nodeId = request.params["nodeId"]?.intValue {
-            return try Mouse.center(of: AXElement(try ElementRegistry.shared.element(for: nodeId)))
+            return try Mouse.center(of: AXElement(try ElementRegistry.current.element(for: nodeId)))
         }
         if let explicit = explicitPoint(request) { return explicit }
         if let frame = aim?.target.frame { return CGPoint(x: frame.midX, y: frame.midY) }

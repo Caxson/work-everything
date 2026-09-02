@@ -247,8 +247,8 @@ export class Daemon {
 
     const result = await executeChain(chain, { runner: this.options.runner, vars });
 
-    // The lock state is polled, so a Mac can lock between admission and the
-    // first step. A chain that lost its screen mid-run did not misbehave:
+    // The screen is learned about between actions, so it can go away between
+    // admission and the first step. A chain that lost it mid-run did not misbehave:
     // it is recorded, and it costs neither trust nor a candidate's record.
     // It is also not put back — part of it may already have happened, and the
     // next event will be deferred properly now that the refusal has landed.
@@ -267,7 +267,7 @@ export class Daemon {
       llmCalls,
       ok: result.ok,
       reason: lostTheScreen
-        ? `${decision.reason}; the screen locked while this was running, so it is recorded but charged to nobody`
+        ? `${decision.reason}; the screen went away while this was running, so it is recorded but charged to nobody`
         : decision.reason,
       error: result.ok ? undefined : `steps failed: ${result.failedTools.join(', ')}`,
       steps: stepsOf(result),

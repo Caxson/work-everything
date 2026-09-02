@@ -1,20 +1,22 @@
 /**
- * The admission gate: what happens to an action when the screen is locked.
+ * The admission gate: what happens to an action when the screen cannot be
+ * driven — because the Mac is locked, or because a full-screen application
+ * owns the active Space and every other application reads as having no window.
  *
  * The daemon asks this before it runs a chain, and the only two answers are
  * "go ahead" and "not now, I have kept it". There is no third answer where the
- * chain runs and fails, and that is the point: a locked Mac is not a failing
+ * chain runs and fails, and that is the point: neither state is a failing
  * scenario. Letting the run proceed would spend a trust demotion — and, after
- * a few locks, a quarantine — on a machine that was working perfectly and a
- * person who was at lunch. Refusing admission costs the scenario nothing,
- * because nothing about it was tried.
+ * a few of them, a quarantine — on a machine that was working perfectly and a
+ * person who was at lunch or reading something full screen. Refusing admission
+ * costs the scenario nothing, because nothing about it was tried.
  *
  * What is *not* deferred matters as much as what is. A chain with no
- * screen-bound tool in it runs normally while the screen is locked: shell work,
- * reading, anything that never asks the window server for a window. Perception
- * is untouched by this file entirely — it never passes through here. Locking
- * the Mac stops the daemon from *acting*, not from *watching*, which is the
- * whole shape of the policy.
+ * screen-bound tool in it runs normally throughout: shell work, reading,
+ * anything that never asks the window server for a window. Perception is
+ * untouched by this file entirely — it never passes through here. An
+ * unavailable screen stops the daemon from *acting*, not from *watching*,
+ * which is the whole shape of the policy.
  *
  * The gate refuses in two different ways, and the difference is deliberate:
  *
@@ -32,7 +34,8 @@ import type { DeferredStore } from '../memory/deferred.js';
 import type { DeferralConfig, DeferredAction, PreconditionCheck } from './deferred.js';
 import { describeChain } from './deferred.js';
 import type { QueueJournal } from './journal.js';
-import type { ScreenLockSensor } from './screenLock.js';
+import type { ScreenSensor } from './screen.js';
+import { describeBlock } from './screen.js';
 
 /** What the daemon wants to run. */
 export interface AdmissionRequest {
@@ -65,23 +68,24 @@ export interface ExecutionGate {
    * Whether the screen is unavailable *now*.
    *
    * Asked after a chain has already failed, to decide whose fault it was. The
-   * lock state is polled, so there is a window between a Mac locking and this
-   * side hearing about it in which a chain is admitted, runs, and fails on a
-   * screen that went away underneath it. The bridge's refusal closes the window
-   * for every action after that one — but the one caught inside it must still
-   * not be charged for it, because a demotion there is a scenario losing
-   * standing over the user pressing a key.
+   * screen is learned about between actions, so there is a window between a
+   * Mac locking — or somebody going full screen — and this side hearing about
+   * it, in which a chain is admitted, runs, and fails on a screen that went
+   * away underneath it. The bridge's refusal closes the window for every action
+   * after that one, but the one caught inside it must still not be charged for
+   * it, because a demotion there is a scenario losing standing over the user
+   * pressing a key.
    */
   screenIsUnavailable(): boolean;
 }
 
 export interface ActionGateDeps {
-  readonly sensor: ScreenLockSensor;
+  readonly sensor: ScreenSensor;
   /**
    * Whether a drain is in progress. Defaults to never.
    *
    * The daemon and the drainer are two async loops over one runner, and during
-   * a drain the screen is unlocked — so without this a freshly-arrived reply is
+   * a drain the screen is available — so without this a freshly-arrived reply is
    * admitted and races ahead of replies that have been waiting minutes, which
    * is the visible reordering the queue exists to prevent. Queueing it instead
    * puts it at the back, where it belongs.
@@ -89,7 +93,7 @@ export interface ActionGateDeps {
   readonly busy?: () => boolean;
   readonly store: DeferredStore;
   readonly journal: QueueJournal;
-  /** Tools that cannot run behind a locked screen. Everything else may. */
+  /** Tools that cannot run while the screen is unavailable. Others may. */
   readonly screenBound: ReadonlySet<string>;
   readonly capture: CaptureFn;
   readonly config: DeferralConfig;
@@ -103,12 +107,12 @@ export class ActionGate implements ExecutionGate {
   async admit(request: AdmissionRequest): Promise<Admission> {
     if (!this.deps.config.enabled) return { admitted: true };
     if (!this.needsScreen(request.chain)) return { admitted: true };
-    if (!this.deps.sensor.locked && this.deps.busy?.() !== true) return { admitted: true };
+    if (!this.deps.sensor.blocked && this.deps.busy?.() !== true) return { admitted: true };
     return this.defer(request);
   }
 
   screenIsUnavailable(): boolean {
-    return this.deps.sensor.locked;
+    return this.deps.sensor.blocked;
   }
 
   /** Whether any step of this chain has to address a window to do its work. */
@@ -130,8 +134,10 @@ export class ActionGate implements ExecutionGate {
     );
     this.recordEvictions(dropped);
 
-    const cause = this.deps.sensor.locked
-      ? 'the screen is locked'
+    // The sensor's own words for whatever is in force, so a new blocker is
+    // explained by the thing that knows about it rather than named here.
+    const cause = this.deps.sensor.blocked
+      ? describeBlock(this.deps.sensor.current())
       : 'the queue is draining, and this must not overtake what is already waiting';
     const reason =
       `${cause}, so '${describeChain(action)}' was queued as ${action.id} instead of run; ` +

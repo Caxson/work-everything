@@ -30,6 +30,7 @@ enum HybridInput {
         let target: BackgroundTarget
         let perCharacterMicroseconds: UInt32
         let advertised: [String]
+        let caret: ComposerCaret.Plan
 
         var json: JSONValue {
             .object([
@@ -43,7 +44,11 @@ enum HybridInput {
                 // Part of the contract, visible without running: focus is read back from
                 // AXFocusedUIElement and must identify this element before a key is sent.
                 "verifiesFocus": .bool(true),
-                "perCharacterMs": .int(Int(perCharacterMicroseconds) / 1000)
+                "perCharacterMs": .int(Int(perCharacterMicroseconds) / 1000),
+                // The other half of the contract: what will be done about the caret reset an
+                // empty composer performs on its first character, decided from this element
+                // rather than assumed — so a dry run shows the decision, not the mechanism.
+                "caret": caret.json
             ])
         }
     }
@@ -53,10 +58,22 @@ enum HybridInput {
     /// from the outside otherwise.
     static func focusAndType(element: AXElement, nodeId: Int, text: String, target: BackgroundTarget,
                              focusAction: String, strategy: FocusStrategy, fields: DispatchFields,
-                             perCharacterMicroseconds: UInt32, dryRun: Bool) throws -> JSONValue {
+                             perCharacterMicroseconds: UInt32, caretBudget: ComposerCaret.Budget,
+                             recoverCaret: Bool, dryRun: Bool) throws -> JSONValue {
+        // Read before anything is focused or typed: the decision is about the composer as
+        // the caller left it, and focusing can change what it exposes.
+        //
+        // `recoverCaret: false` is the switch that makes the fix falsifiable — it types the
+        // way this bridge did before, so the scramble can be reproduced against the same
+        // element in the same run instead of being taken on trust. It exists for the same
+        // reason the `fields` switches do, and for nothing else.
+        let caret = recoverCaret
+            ? ComposerCaret.decide(element: element, text: text, budget: caretBudget)
+            : ComposerCaret.Plan.straightThrough(reason: "caretRecovery: false — the caller asked for "
+                + "the behaviour this bridge had before the caret reset was handled")
         let plan = Plan(nodeId: nodeId, focusAction: focusAction, strategy: strategy, text: text,
                         target: target, perCharacterMicroseconds: perCharacterMicroseconds,
-                        advertised: element.actionNames())
+                        advertised: element.actionNames(), caret: caret)
         guard !dryRun else {
             return .object(["ok": .bool(true), "dryRun": .bool(true), "plan": plan.json])
         }
@@ -67,12 +84,15 @@ enum HybridInput {
         let focused = try Focuser.focus(element: element, action: focusAction, strategy: strategy,
                                         target: target, fields: fields)
 
-        let addressing = try BackgroundInput.type(text, target: target, fields: fields,
-                                                  perCharacterMicroseconds: perCharacterMicroseconds)
+        let typed = try BackgroundInput.type(text, target: target, fields: fields,
+                                             perCharacterMicroseconds: perCharacterMicroseconds,
+                                             caret: caret)
         return .object([
             "ok": .bool(true),
             "focused": focused.json,
-            "typed": .object(["characters": .int(text.count), "addressing": addressing.json]),
+            "typed": .object(["characters": .int(text.count),
+                              "addressing": typed.addressing.json,
+                              "caret": typed.caret]),
             "plan": plan.json
         ])
     }

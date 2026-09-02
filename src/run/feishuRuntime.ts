@@ -9,21 +9,24 @@
  * pending confirmation, so nothing the daemon decided to say reaches a person
  * without someone having said it may.
  *
- * It is also where the locked-screen policy is assembled, and the assembly is
- * the policy. There is **one** lock sensor, and every channel into it carries
- * the helper's own verdict: the `env` poll, every `SCREEN_LOCKED` the action
- * layer throws (through `ActionRegistry`'s `onError`, while it is still a typed
- * code), and the health monitor's `screen_locked` (which is that same helper
- * diagnosis, and is the only one that fires when the sender refuses before
- * touching a driver). Nothing here reads a lock state for itself.
+ * It is also where the screen policy is assembled, and the assembly is the
+ * policy. There is **one** screen sensor, and every channel into it carries the
+ * helper's own verdict: the `env` poll, every `SCREEN_LOCKED` and
+ * `FULLSCREEN_SPACE` the action layer throws (through `ActionRegistry`'s
+ * `onError`, while it is still a typed code), and the health monitor's
+ * verdicts — that same helper diagnosis one step earlier, the only channel
+ * that fires when the sender refuses before touching a driver, and the only
+ * reading of the Space anything on this side gets. Nothing here reads a screen
+ * state for itself.
  *
  * What the gate does **not** touch is perception: no perceiver and no reader
  * passes through it, so a non-GUI source keeps producing events, and every
  * event that arrives is still routed and recorded while the Mac is locked.
  * Worth being exact about the limit, though, because it is physical rather
- * than chosen: Feishu is read *through the screen*, and a locked Mac
- * substitutes the application element for every window. So this particular
- * source goes quiet while locked no matter what this file does — the queue
+ * than chosen: Feishu is read *through the screen*. A locked Mac substitutes
+ * the application element for every window, and a full-screen Space is not
+ * composited for the applications that are not on it, so this particular
+ * source goes quiet in both states no matter what this file does — the queue
  * fills from work already in flight and from sources that are not the screen.
  */
 import { openDb } from '../memory/db.js';
@@ -85,7 +88,11 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   const registry = new Registry(db);
   for (const scenario of config.scenarios) registry.saveScenario(scenario);
 
-  const client = new AxBridgeClient({ binaryPath: config.axBridge.binaryPath, requestTimeoutMs: config.axBridge.requestTimeoutMs });
+  const client = new AxBridgeClient({
+    binaryPath: config.axBridge.binaryPath,
+    requestTimeoutMs: config.axBridge.requestTimeoutMs,
+    ...(config.axBridge.socketPath === undefined ? {} : { socketPath: config.axBridge.socketPath }),
+  });
   const routes = new ChatRouteTable();
   const ledger = new SentLedger();
   const reader = new FeishuReader(client, {
@@ -125,11 +132,10 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
     { onError: (error) => noteActionError(error) },
   );
 
-  // The sender consults health *before* it touches a driver, so a locked
-  // screen found there never reaches the action layer's error channel. This is
-  // the same helper diagnosis either way — `health.ts` turns the bridge's
-  // `SCREEN_LOCKED` into a state — so listening here adds a channel, not a
-  // second source.
+  // The sender consults health *before* it touches a driver, so a machine
+  // state found there never reaches the action layer's error channel. This is
+  // the same helper diagnosis either way — `health.ts` turns the bridge's codes
+  // into states — so listening here adds a channel, not a second source.
   const monitor = feishuHealthMonitor(client, reader, { onHealth: (health) => noteHealth(health) });
   let fatal: string | undefined;
   const perceiver = new FeishuPerceiver({
@@ -181,9 +187,10 @@ export function createFeishuRuntime(config: Config, log: LogFn): FeishuRuntime {
   // through a single composer.
   const runner = serializeTools(toolRunner(executors), screenBoundTools(executors));
 
-  // One sensor over two channels, both the helper's own verdict: the
-  // `windowInfo` poll, which keeps answering while locked, and every
-  // SCREEN_LOCKED the drivers throw. Nothing here reads a lock state itself.
+  // One sensor over three channels, all of them the helper's own verdict: the
+  // `env` poll, which keeps answering while locked; every refusal code the
+  // drivers throw; and the health monitor's readings, which are the only ones
+  // that can see the Space. Nothing here reads a screen state itself.
   const { queue, gate, drainer, noteActionError: note, noteHealth: notedHealth } = createActionQueue({
     db,
     store,

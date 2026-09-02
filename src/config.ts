@@ -78,6 +78,20 @@ export const ConfigSchema = z
     axBridge: z
       .object({
         binaryPath: z.string().default(join(DEFAULT_STATE_DIR, 'bin', 'we-ax')),
+        /**
+         * Unix socket of a resident `we-ax` service, installed by
+         * `native/ax-bridge/scripts/install-service.sh`. Set it and the daemon connects
+         * instead of spawning a helper.
+         *
+         * Unset by default, because the socket only exists once somebody has installed the
+         * service — but it is the mode an unattended agent needs. macOS attributes an
+         * Accessibility grant to the *responsible process*, so a spawned helper inherits
+         * the grant of whoever launched the daemon: the same binary reads trusted from a
+         * terminal and untrusted from anywhere else, and granting the binary changes
+         * nothing. A launchd service is responsible for itself, is granted once by hand,
+         * and lends that grant to every caller that can open this socket.
+         */
+        socketPath: z.string().optional(),
         requestTimeoutMs: z.number().int().positive().default(10_000),
         bundleIds: z.array(z.string()).default([]),
         notifications: z.array(z.string()).default(['AXValueChanged', 'AXFocusedUIElementChanged']),
@@ -182,7 +196,10 @@ export function envOverrides(env: NodeJS.ProcessEnv = process.env): Partial<Conf
   if (env['WORK_EVERYTHING_BASE_URL'] !== undefined) llm['baseUrl'] = env['WORK_EVERYTHING_BASE_URL'];
   if (env['WORK_EVERYTHING_MODEL'] !== undefined) llm['model'] = env['WORK_EVERYTHING_MODEL'];
   if (Object.keys(llm).length > 0) out['llm'] = llm;
-  if (env['WORK_EVERYTHING_AX_BINARY'] !== undefined) out['axBridge'] = { binaryPath: env['WORK_EVERYTHING_AX_BINARY'] };
+  const axBridge: Record<string, unknown> = {};
+  if (env['WORK_EVERYTHING_AX_BINARY'] !== undefined) axBridge['binaryPath'] = env['WORK_EVERYTHING_AX_BINARY'];
+  if (env['WORK_EVERYTHING_AX_SOCKET'] !== undefined) axBridge['socketPath'] = env['WORK_EVERYTHING_AX_SOCKET'];
+  if (Object.keys(axBridge).length > 0) out['axBridge'] = axBridge;
   return out as Partial<ConfigInput>;
 }
 

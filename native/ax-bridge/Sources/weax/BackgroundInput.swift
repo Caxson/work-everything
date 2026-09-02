@@ -108,6 +108,15 @@ enum BackgroundInput {
     static let downUpGapMicroseconds: UInt32 = 30_000
     static let afterClickMicroseconds: UInt32 = 20_000
 
+    /// The gap between one character's key pair and the next.
+    ///
+    /// **This number was chosen, not measured.** It is here to keep two unicode key pairs
+    /// from arriving inside a single render, and 4ms was picked because it is small enough
+    /// to be invisible in a message-length string. The one thing it was measured *not* to
+    /// fix is the scrambling this bridge used to produce — see `ComposerCaret` for the
+    /// interval sweep and why widening this value cannot help.
+    static let perCharacterMicroseconds: UInt32 = 4_000
+
     // MARK: - Field application
 
     private static func address(_ event: CGEvent, target: BackgroundTarget,
@@ -226,16 +235,81 @@ enum BackgroundInput {
         return report
     }
 
+    /// What a typing run did, beyond where its events were aimed.
+    struct TypedReport {
+        let addressing: AddressingReport
+        /// What was done about the composer's caret, and whether it was needed.
+        let caret: JSONValue
+
+        var json: JSONValue {
+            .object(["addressing": addressing.json, "caret": caret])
+        }
+    }
+
     /// Types text as unicode payloads, one grapheme cluster per key pair.
     ///
     /// This is the only way measured to get text into a `contenteditable`: every public
     /// accessibility write reported success and produced no `beforeinput` or `input` at
     /// all, so the page — and therefore the app's own state — never saw the text.
-    @discardableResult
+    ///
+    /// The first character is a boundary rather than just the first iteration. A composer
+    /// going from empty to non-empty re-renders and puts its caret back at position 0, so
+    /// everything after the first character is inserted in front of it and the result is a
+    /// deterministic scramble — `we ping` arrives as `e pingw`, at every interval from 12ms
+    /// to 90ms. `ComposerCaret` carries the measurement; `caret` decides what to do about
+    /// it, and answers `straightThrough` for every element where it does not apply.
     static func type(_ text: String, target: BackgroundTarget, fields: DispatchFields,
-                     perCharacterMicroseconds: UInt32 = 4_000) throws -> AddressingReport {
-        var report = AddressingReport()
-        for cluster in text {
+                     perCharacterMicroseconds: UInt32 = BackgroundInput.perCharacterMicroseconds,
+                     caret: ComposerCaret.Plan = .straightThrough(reason: "no element to watch"))
+        throws -> TypedReport {
+        let clusters = Array(text)
+        guard case .recoverAfterFirstCharacter(let element, let budget) = caret, !clusters.isEmpty else {
+            let report = try post(clusters, target: target, fields: fields,
+                                  perCharacterMicroseconds: perCharacterMicroseconds)
+            return TypedReport(addressing: report ?? AddressingReport(), caret: caret.json)
+        }
+        return try typeAroundReset(clusters, element: element, budget: budget, plan: caret.json,
+                                   target: target, fields: fields,
+                                   perCharacterMicroseconds: perCharacterMicroseconds)
+    }
+
+    /// One character, then a wait for it, then the caret back to the end, then the rest.
+    ///
+    /// The wait is what makes the caret move meaningful. Sending `end` before the composer
+    /// has re-rendered would move a caret the render is about to reset anyway, which is the
+    /// same bug with an extra keystroke in it.
+    private static func typeAroundReset(_ clusters: [Character], element: AXElement,
+                                        budget: ComposerCaret.Budget, plan: JSONValue,
+                                        target: BackgroundTarget, fields: DispatchFields,
+                                        perCharacterMicroseconds: UInt32) throws -> TypedReport {
+        guard let first = clusters.first else { return TypedReport(addressing: AddressingReport(), caret: plan) }
+        _ = try post([first], target: target, fields: fields,
+                     perCharacterMicroseconds: perCharacterMicroseconds)
+        // Throws if it never lands: one character is out there and the caret is somewhere
+        // unknown, which is the exact state that must not be typed into.
+        let landing = try ComposerCaret.awaitFirstCharacter(element: element, cluster: String(first),
+                                                            budget: budget)
+        // Throws CARET_NOT_AT_END when the move can be read back and did not work: typing
+        // the rest into a caret that is provably still at the front is the bug, not a
+        // degraded version of the fix.
+        let moved = try ComposerCaret.moveToEnd(element: element, characters: String(first).utf16.count,
+                                                target: target, fields: fields, budget: budget)
+        let rest = try post(Array(clusters.dropFirst()), target: target, fields: fields,
+                            perCharacterMicroseconds: perCharacterMicroseconds)
+
+        var applied = plan.objectValue ?? [:]
+        applied["applied"] = .bool(true)
+        applied["firstCharacter"] = landing
+        applied["caretMove"] = moved
+        return TypedReport(addressing: rest ?? AddressingReport(), caret: .object(applied))
+    }
+
+    /// Posts one key pair per grapheme cluster. Returns nil when there was nothing to type,
+    /// so a caller can tell "no events" from "events with an empty addressing report".
+    private static func post(_ clusters: [Character], target: BackgroundTarget, fields: DispatchFields,
+                             perCharacterMicroseconds: UInt32) throws -> AddressingReport? {
+        var report: AddressingReport?
+        for cluster in clusters {
             let utf16 = Array(String(cluster).utf16)
             guard let down = CGEvent(keyboardEventSource: keySource, virtualKey: 0, keyDown: true),
                   let up = CGEvent(keyboardEventSource: keySource, virtualKey: 0, keyDown: false) else {

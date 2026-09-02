@@ -1,5 +1,5 @@
 /**
- * Letting the queue out again, once the screen is back.
+ * Letting the queue out again, once the screen can be driven.
  *
  * Every action here was authorized minutes ago against a world that has since
  * been out of sight. So nothing is simply replayed: each one passes three
@@ -27,7 +27,7 @@
  * favour of order.
  *
  * **Nothing is retried.** An action that came out of the queue, ran, and failed
- * is settled as failed — including when it failed because the screen locked
+ * is settled as failed — including when it failed because the screen went away
  * again mid-run. It has already touched the world; putting it back would be the
  * daemon deciding on its own to repeat a write, which is the class of mistake
  * this whole mechanism exists to prevent.
@@ -39,21 +39,21 @@ import type { DeferralConfig, DeferredAction } from './deferred.js';
 import { authorityLapsed, describeAge, describeChain, hasExpired } from './deferred.js';
 import type { QueueJournal } from './journal.js';
 import type { PreconditionRegistry } from './preconditions.js';
-import type { ScreenLockSensor } from './screenLock.js';
-import { describeScreen } from './screenLock.js';
+import type { ScreenSensor } from './screen.js';
+import { describeBlock, describeScreen } from './screen.js';
 
 export interface DrainReport {
   readonly executed: readonly DeferredAction[];
   readonly discarded: readonly DeferredAction[];
   readonly handedBack: readonly DeferredAction[];
-  /** Set when the drain stopped early: a re-lock, or a head that cannot run yet. */
+  /** Set when the drain stopped early: the screen went, or the head cannot run yet. */
   readonly stoppedBecause?: string | undefined;
 }
 
 const EMPTY_REPORT: DrainReport = { executed: [], discarded: [], handedBack: [] };
 
 export interface QueueDrainerDeps {
-  readonly sensor: ScreenLockSensor;
+  readonly sensor: ScreenSensor;
   readonly store: DeferredStore;
   readonly journal: QueueJournal;
   readonly preconditions: PreconditionRegistry;
@@ -86,6 +86,10 @@ export class QueueDrainer {
    * first action after every lock is admitted against a stale reading, runs,
    * and fails — the exact outcome the queue exists to prevent. One bridge
    * round-trip per interval is what that costs.
+   *
+   * It answers for the lock and nothing else. A full-screen Space is not
+   * reported by any op that takes no window, so it is learned and unlearned
+   * from the health monitor's readings instead — see `queue/screen.ts`.
    */
   async tick(): Promise<DrainReport> {
     // A queue switched off still expires what it is holding. Rows queued
@@ -96,7 +100,7 @@ export class QueueDrainer {
     if (!this.deps.config.enabled) return await this.expireOnly();
 
     await this.deps.sensor.refresh();
-    if (this.deps.sensor.locked) {
+    if (this.deps.sensor.blocked) {
       if (this.deps.store.pendingCount() === 0) return EMPTY_REPORT;
       return { ...EMPTY_REPORT, stoppedBecause: `${describeScreen(this.deps.sensor.current())}; nothing that needs a window will run yet` };
     }
@@ -142,8 +146,8 @@ export class QueueDrainer {
     let stoppedBecause: string | undefined;
 
     for (const action of this.deps.store.pending()) {
-      if (this.deps.sensor.locked) {
-        stoppedBecause = 'the screen locked again mid-drain; the rest stays queued';
+      if (this.deps.sensor.blocked) {
+        stoppedBecause = `the screen went away again mid-drain (${describeBlock(this.deps.sensor.current())}); the rest stays queued`;
         break;
       }
 
@@ -184,7 +188,7 @@ export class QueueDrainer {
 
     if (hasExpired(action, now)) {
       const detail =
-        `dropped without running: it waited ${describeAge(action.enqueuedAt, now)} behind a locked screen, past the ` +
+        `dropped without running: it waited ${describeAge(action.enqueuedAt, now)} for a screen it could use, past the ` +
         'point where it was still the action that was authorized';
       return { kind: 'discarded', action: this.discard(action, 'expired', detail, now) };
     }
@@ -216,7 +220,7 @@ export class QueueDrainer {
     if (hasExpired(action, atTheDoor)) {
       const detail =
         `dropped without running: it expired while its premise was being re-checked, after waiting ` +
-        `${describeAge(action.enqueuedAt, atTheDoor)} behind a locked screen`;
+        `${describeAge(action.enqueuedAt, atTheDoor)} for a screen it could use`;
       return { kind: 'discarded', action: this.discard(action, 'expired', detail, atTheDoor) };
     }
 
@@ -230,12 +234,12 @@ export class QueueDrainer {
     const result = await executeChain(claimed.chain, { runner: this.deps.runner, vars: claimed.vars });
     this.deps.journal.executed(claimed, result, premise);
 
-    const relocked = !result.ok && this.deps.sensor.locked;
+    const lostTheScreen = !result.ok && this.deps.sensor.blocked;
     const detail = result.ok
-      ? `ran '${describeChain(claimed)}' after the unlock`
-      : relocked
-        ? `the screen locked again while it was running; failed at ${result.failedTools.join(', ') || 'an unknown step'} ` +
-          'and was not put back, because part of it may already have happened'
+      ? `ran '${describeChain(claimed)}' once the screen was usable again`
+      : lostTheScreen
+        ? `the screen went away again while it was running (${describeBlock(this.deps.sensor.current())}); failed at ` +
+          `${result.failedTools.join(', ') || 'an unknown step'} and was not put back, because part of it may already have happened`
         : `failed at ${result.failedTools.join(', ') || 'an unknown step'}`;
     const settled = this.deps.store.settle(action, result.ok ? 'executed' : 'failed', detail, this.now(), this.deps.config.historyLimit);
     this.log(`[queue] ${result.ok ? 'ran' : 'failed'} ${settled.id}: ${action.purpose}`);

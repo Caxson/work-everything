@@ -28,6 +28,9 @@ enum Dispatcher {
         "attr", "setValue", "press", "focus"
     ]
 
+    /// The one op that ends a client rather than answering for it.
+    static let shutdownOp = "shutdown"
+
     static func handle(_ request: Request) {
         do {
             if trustRequired.contains(request.op), !AXIsProcessTrusted() {
@@ -35,13 +38,19 @@ enum Dispatcher {
             }
             if lockSensitive.contains(request.op) { try ScreenLock.requireUnlocked() }
             let result = try run(request)
-            Output.shared.success(id: request.id, result: result)
+            Output.current.success(id: request.id, result: result)
         } catch let error as BridgeError {
-            Output.shared.failure(id: request.id, error: error)
+            Output.current.failure(id: request.id, error: error)
         } catch {
-            Output.shared.failure(id: request.id,
+            Output.current.failure(id: request.id,
                                   error: BridgeError(code: "INTERNAL", message: String(describing: error)))
         }
+        // `shutdown` releases the client *after* its acknowledgement is on the wire; closing
+        // first would drop the reply the caller is waiting on. On stdio that ends the
+        // process, as it always has. On a socket it ends one client and leaves the service
+        // running for everybody else — a resident bridge that any single caller could stop
+        // would be a resident bridge in name only.
+        if request.op == shutdownOp { Connection.current.close() }
     }
 
     private static func run(_ request: Request) throws -> JSONValue {
@@ -62,7 +71,7 @@ enum Dispatcher {
         case "click": return try InputOps.click(request)
         case "scroll": return try InputOps.scroll(request)
         case "observe": return try observe(request)
-        case "unobserve": return try ObserverRegistry.shared.unobserve(id: request.requireInt("subscription"))
+        case "unobserve": return try ObserverRegistry.current.unobserve(id: request.requireInt("subscription"))
         case "windowInfo": return try BackgroundOps.windowInfo(request)
         case "awaitTree": return try BackgroundOps.awaitTree(request)
         case "activate": return try BackgroundOps.activate(request)
@@ -123,8 +132,13 @@ enum Dispatcher {
             "frontmost": .string(now.frontmostName),
             "spi": SPI.report,
             "screen": ScreenLock.report,
-            "sessions": .int(SessionRegistry.shared.count),
-            "nodes": .int(ElementRegistry.shared.count)
+            "sessions": .int(SessionRegistry.current.count),
+            "nodes": .int(ElementRegistry.current.count),
+            // Which client is being answered, and over what. Both counts above are that
+            // client's own: on a socket the bridge serves several at once, and a caller
+            // reading a total it did not create would be reading somebody else's work.
+            "connection": .int(Connection.current.id),
+            "transport": .string(Connection.current.transport)
         ])
     }
 
@@ -201,7 +215,7 @@ enum Dispatcher {
     }
 
     private static func attr(_ request: Request) throws -> JSONValue {
-        let element = AXElement(try ElementRegistry.shared.element(for: request.requireInt("nodeId")))
+        let element = AXElement(try ElementRegistry.current.element(for: request.requireInt("nodeId")))
         let name = try request.requireString("name")
         // Pseudo-attribute: enumerate what this element actually exposes.
         if name == "AXAttributeNames" { return attributeNames(element) }
@@ -210,32 +224,28 @@ enum Dispatcher {
     }
 
     private static func attributeNames(_ element: AXElement) -> JSONValue {
-        var names: CFArray?
-        AXUIElementCopyAttributeNames(element.ref, &names)
-        let list = (names as? [String]) ?? []
-        return .array(list.map { .string($0) })
+        .array(element.attributeNames().map { .string($0) })
     }
 
     private static func observe(_ request: Request) throws -> JSONValue {
         let pid = try Processes.requirePid(request.requireInt("pid"))
         let element: AXUIElement
         if let nodeId = request.params["nodeId"]?.intValue {
-            element = try ElementRegistry.shared.element(for: nodeId)
+            element = try ElementRegistry.current.element(for: nodeId)
         } else {
             element = AXElement.application(pid: pid).ref
         }
         guard let names = try request.require("notifications").arrayValue?.compactMap({ $0.stringValue }) else {
             throw BridgeError.badRequest("'notifications' must be an array of strings")
         }
-        return try ObserverRegistry.shared.observe(pid: pid, element: element, notifications: names)
+        return try ObserverRegistry.current.observe(pid: pid, element: element, notifications: names)
     }
 
+    /// Answers, and lets `handle` do the releasing once the answer has been written. The
+    /// teardown itself lives in `Connection.close`, which every other way of losing a
+    /// client also goes through — a dropped socket and a closed stdin must not release
+    /// less than an explicit `shutdown` does.
     private static func shutdown(_ request: Request) -> JSONValue {
-        Output.shared.success(id: request.id, result: .object(["ok": .bool(true)]))
-        // A suppression tap that outlives the process that installed it would leave
-        // somebody else's application filtered with nothing left to un-filter it.
-        SessionRegistry.shared.releaseAll()
-        ObserverRegistry.shared.teardownAll()
-        exit(0)
+        .object(["ok": .bool(true)])
     }
 }

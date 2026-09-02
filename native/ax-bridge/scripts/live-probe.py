@@ -154,7 +154,8 @@ def check_cursor(what, inv, redo=None):
           f"{moved:.2f}px over {span * 1000:.0f}ms while the pointer was otherwise still "
           f"({control:.2f}px) — this one is ours")
 
-ENV_CODES = {"SCREEN_LOCKED", "AX_SEES_NO_WINDOWS_BUT_CG_DOES", "NO_WINDOW", "NO_SAFE_POINT"}
+ENV_CODES = {"SCREEN_LOCKED", "AX_SEES_NO_WINDOWS_BUT_CG_DOES", "NO_WINDOW", "NO_SAFE_POINT",
+             "FULLSCREEN_SPACE"}
 
 class EnvironmentChanged(Exception):
     """The desktop stopped compositing partway through.
@@ -223,7 +224,8 @@ try:
         d = save("01b-diagnosis", b.call("click", pid=pid, background=True, x=1.0, y=1.0))
         check("empty window list is diagnosed, not returned as 'no windows'",
               d["ok"] is False and d["error"]["code"] in
-              ("AX_SEES_NO_WINDOWS_BUT_CG_DOES", "SCREEN_LOCKED", "NO_WINDOW"),
+              ("AX_SEES_NO_WINDOWS_BUT_CG_DOES", "SCREEN_LOCKED", "NO_WINDOW",
+               "FULLSCREEN_SPACE"),
               f"{d.get('error',{}).get('code')} scope={d.get('error',{}).get('details',{}).get('scope')}")
         w0 = {"windowNumber": probe_windows[0], "frame": None, "title": "W0"}
         w1 = {"windowNumber": probe_windows[1], "frame": None, "title": "W1"}

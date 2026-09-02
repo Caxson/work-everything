@@ -53,7 +53,21 @@ describe('config', () => {
       dbPath: '/tmp/x.db',
       axBridge: { binaryPath: '/opt/we-ax' },
     });
+    expect(envOverrides({ WORK_EVERYTHING_AX_SOCKET: '/tmp/we-ax.sock' })).toEqual({
+      axBridge: { socketPath: '/tmp/we-ax.sock' },
+    });
+    expect(envOverrides({ WORK_EVERYTHING_AX_BINARY: '/opt/we-ax', WORK_EVERYTHING_AX_SOCKET: '/tmp/we-ax.sock' })).toEqual({
+      axBridge: { binaryPath: '/opt/we-ax', socketPath: '/tmp/we-ax.sock' },
+    });
     expect(envOverrides({})).toEqual({});
+  });
+
+  it('leaves the ax bridge socket unset by default, so nothing assumes a service exists', () => {
+    // The socket only exists once somebody has installed the launchd agent. Defaulting to
+    // its path would turn "not installed" into a connect error on every startup, when the
+    // spawn path still works — badly, but it works.
+    expect(parseConfig({}).axBridge.socketPath).toBeUndefined();
+    expect(parseConfig({ axBridge: { socketPath: '/tmp/we-ax.sock' } }).axBridge.socketPath).toBe('/tmp/we-ax.sock');
   });
 
   it('gives the deferral queue defaults that let a forgotten action die quietly', () => {

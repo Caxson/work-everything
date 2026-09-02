@@ -35,7 +35,7 @@ export * from './memory/trajectory.js';
 export * from './memory/registry.js';
 export * from './memory/deferred.js';
 export * from './queue/deferred.js';
-export * from './queue/screenLock.js';
+export * from './queue/screen.js';
 export * from './queue/preconditions.js';
 export * from './queue/journal.js';
 export * from './queue/gate.js';

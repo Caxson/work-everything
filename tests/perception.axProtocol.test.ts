@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AxNodeSchema, createLineDecoder, decodeMessage, encodeRequest } from '../src/perception/macos/axProtocol.js';
+import { AxNodeSchema, WindowDiagnosisSchema, createLineDecoder, decodeMessage, encodeRequest } from '../src/perception/macos/axProtocol.js';
 
 describe('ax protocol codec', () => {
   it('encodes a request as one newline-terminated object', () => {
@@ -64,5 +64,59 @@ describe('AxNodeSchema scalar coercion', () => {
 
   it('keeps a real string value untouched', () => {
     expect(AxNodeSchema.parse({ nodeId: 1, role: 'AXStaticText', value: 'hi' }).value).toBe('hi');
+  });
+});
+
+describe('the window diagnosis, as the helper sends it', () => {
+  /**
+   * A real `FULLSCREEN_SPACE` answer, verbatim: Chrome full-screen on one
+   * display, 飞书 on the Space behind it. Activating 飞书 gave it 1 addressable
+   * window at 1397x937 and returning to Chrome took it away again, which is
+   * what makes this a fact about the machine rather than about that process.
+   */
+  const FULLSCREEN = {
+    code: 'FULLSCREEN_SPACE',
+    message:
+      'pid 68285 exposes no accessibility window because the active Space belongs to a full-screen application (Google Chrome). ' +
+      'macOS does not composite windows that live on another Space, and accessibility follows the compositor: every application ' +
+      'on the other Space reads as having no window. Nothing is wrong and retrying will not help — the action has to wait until ' +
+      'the person leaves full screen, or be run against an application on this Space. Evidence: AXFullScreen, currentSpaceType=4',
+    details: {
+      cgWindows: 6,
+      onScreen: 0,
+      desktopOnScreen: 3,
+      desktopOwnersOnScreen: 1,
+      screenSaverOnScreen: false,
+      scope: 'application',
+      space: { fullScreen: true, evidence: ['AXFullScreen', 'currentSpaceType=4'], spaces: 3, currentSpaceType: 4, frontmostApp: 'Google Chrome' },
+      axWindows: { entries: 0, real: 0, nonElement: 0, selfEqual: 0 },
+    },
+  };
+
+  it('parses a full-screen Space census without losing any of it', () => {
+    const diagnosis = WindowDiagnosisSchema.parse(FULLSCREEN);
+    expect(diagnosis.code).toBe('FULLSCREEN_SPACE');
+    expect(diagnosis.details?.space).toEqual(FULLSCREEN.details.space);
+    expect(diagnosis.details?.scope).toBe('application');
+    // Kept by `passthrough`: this side does not read it, and dropping a key
+    // the helper measured would make the census unreadable in a log.
+    expect(diagnosis.details?.['axWindows']).toEqual(FULLSCREEN.details.axWindows);
+  });
+
+  it('accepts a Space census with only the two fields that are always there', () => {
+    // `spaces`, `currentSpaceType` and `frontmostApp` come from a private list
+    // a macOS may stop vending. Absence must parse, and must not read as false.
+    const diagnosis = WindowDiagnosisSchema.parse({
+      code: 'FULLSCREEN_SPACE',
+      message: 'no accessibility window: the active Space belongs to a full-screen application',
+      details: { cgWindows: 6, onScreen: 0, space: { fullScreen: true, evidence: ['AXFullScreen'] } },
+    });
+    expect(diagnosis.details?.space).toEqual({ fullScreen: true, evidence: ['AXFullScreen'] });
+    expect(diagnosis.details?.space?.frontmostApp).toBeUndefined();
+  });
+
+  it('still parses a helper that reports no Space at all', () => {
+    const diagnosis = WindowDiagnosisSchema.parse({ code: 'NO_WINDOW', details: { cgWindows: 0, onScreen: 0 } });
+    expect(diagnosis.details?.space).toBeUndefined();
   });
 });

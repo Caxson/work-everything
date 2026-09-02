@@ -147,12 +147,12 @@ export type AxError = z.infer<typeof AxErrorSchema>;
  * Why an application exposes no window.
  *
  * The helper classifies this rather than answering with an empty array,
- * because the four causes look identical from a count and call for four
- * different responses — see `windows` in `docs/ax-bridge-protocol.md`. An
+ * because the causes look identical from a count and call for different
+ * responses — see `windows` in `docs/ax-bridge-protocol.md`. An
  * unrecognised code is accepted rather than rejected: a new cause the helper
  * learns to tell apart must not stop this side parsing the answer.
  */
-export const WINDOW_DIAGNOSIS_CODES = ['OK', 'SCREEN_LOCKED', 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', 'NO_WINDOW'] as const;
+export const WINDOW_DIAGNOSIS_CODES = ['OK', 'SCREEN_LOCKED', 'FULLSCREEN_SPACE', 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', 'NO_WINDOW'] as const;
 export type WindowDiagnosisCode = (typeof WINDOW_DIAGNOSIS_CODES)[number];
 
 export const WindowDiagnosisDetailsSchema = z
@@ -163,7 +163,12 @@ export const WindowDiagnosisDetailsSchema = z
     onScreen: z.number().int().optional(),
     /** Ordinary windows on screen across the whole machine. */
     desktopOnScreen: z.number().int().optional(),
-    /** How many processes own them. One means the desktop is not compositing. */
+    /**
+     * How many processes own them. Detail, and evidence for nothing: a single
+     * full-screen application is exactly one owner on screen, so the `<= 1`
+     * this used to stand in for reported a machine drawing nothing while
+     * Chrome was drawing at 1728x1003.
+     */
     desktopOwnersOnScreen: z.number().int().optional(),
     /** `desktop` when nothing anywhere is being drawn; `application` when it is just this one. */
     scope: z.string().optional(),
@@ -174,6 +179,29 @@ export const WindowDiagnosisDetailsSchema = z
      * key means "this helper does not report it".
      */
     screenSaverOnScreen: z.boolean().optional(),
+    /**
+     * Whether the active Space belongs to a full-screen application, and what
+     * said so. Measured with Chrome full-screen on one display: 飞书 reported
+     * 0 accessibility windows against 6 known to the window server, activating
+     * it gave 1 addressable window at 1397x937, and returning to Chrome took
+     * it away again. macOS composites no window that lives on another Space
+     * and accessibility follows the compositor, so this is a fact about the
+     * machine rather than about the process being asked after.
+     *
+     * `spaces`, `currentSpaceType` and `frontmostApp` come from a private
+     * Space list a macOS may stop vending; absence is not a negative answer.
+     * `fullScreen` and `evidence` are on every census the helper builds.
+     */
+    space: z
+      .object({
+        fullScreen: z.boolean(),
+        evidence: z.array(z.string()),
+        spaces: z.number().int().optional(),
+        currentSpaceType: z.number().int().optional(),
+        frontmostApp: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 export type WindowDiagnosisDetails = z.infer<typeof WindowDiagnosisDetailsSchema>;

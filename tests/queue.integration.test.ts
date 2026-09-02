@@ -19,7 +19,7 @@ import type { Perceiver } from '../src/perception/base.js';
 import { ChatRouteTable } from '../src/perception/feishu/chatRoutes.js';
 import { FEISHU_REPLY_TOOL } from '../src/execution/feishu/sender.js';
 import { FEISHU_REPLY_PREMISE, feishuReplyCapture, feishuReplyChecker } from '../src/execution/feishu/replyPremise.js';
-import { ScreenLockSensor } from '../src/queue/screenLock.js';
+import { ScreenSensor } from '../src/queue/screen.js';
 import { QueueJournal, QUEUE_TIERS } from '../src/queue/journal.js';
 import { PreconditionRegistry } from '../src/queue/preconditions.js';
 import { ActionGate } from '../src/queue/gate.js';
@@ -66,7 +66,7 @@ interface Loop {
   readonly queue: DeferredStore;
   readonly store: TrajectoryStore;
   readonly registry: Registry;
-  readonly sensor: ScreenLockSensor;
+  readonly sensor: ScreenSensor;
   /** The first idle poll, so a test can await the screen state being known. */
   readonly primed: Promise<unknown>;
   readonly sent: Readonly<Record<string, string>>[];
@@ -91,7 +91,7 @@ function loop(over: { db?: Db; config?: Partial<DeferralConfig>; perceiver?: Per
   let now = NOW;
   let locked = true;
   let openChat = CHAT;
-  const sensor = new ScreenLockSensor({ probe: async () => ({ locked }), now: () => now });
+  const sensor = new ScreenSensor({ probe: async () => ({ locked }), now: () => now });
 
   const routes = new ChatRouteTable();
   const sent: Readonly<Record<string, string>>[] = [];
@@ -333,7 +333,7 @@ describe('a locked screen, end to end', () => {
     await relocked.primed;
     relocked.setLocked(false);
     await relocked.drainer.tick();
-    relocked.sensor.noteLocked('the Mac is locked');
+    relocked.sensor.note('locked', 'the Mac is locked');
 
     // With the screen gone, the next chain is deferred at admission instead.
     const deferred = await relocked.daemon.handle(event('feishu-2'));
@@ -349,7 +349,7 @@ describe('a locked screen, end to end', () => {
 
     for (const traceId of ['feishu-1', 'feishu-2', 'feishu-3']) {
       // The lock lands mid-run: the chain is admitted, then the screen goes.
-      l.sensor.noteLocked('the Mac is locked');
+      l.sensor.note('locked', 'the Mac is locked');
       await l.daemon.handle(event(traceId));
       l.setLocked(false);
       await l.drainer.tick();
@@ -385,5 +385,63 @@ describe('a locked screen, end to end', () => {
     l.setLocked(false);
     await l.drainer.tick();
     expect(l.sent.map((args) => args['trace_id'])).toEqual(['feishu-2']);
+  });
+});
+
+describe('a full-screen Space, end to end', () => {
+  // The Mac is unlocked and somebody is using it. Chrome full-screen took
+  // 飞书's accessibility windows away — 0 against 6 known to the window server,
+  // measured — and no poll on this side can see that, so the queue hears it
+  // from a reading of the application and holds until one says it is over.
+
+  const held = 'the active Space belongs to a full-screen application (Google Chrome)';
+
+  it('defers the reply, costs the scenario nothing, and sends it once the Space is left', async () => {
+    const l = loop();
+    await l.primed;
+    l.setLocked(false);
+    await l.drainer.tick();
+    l.sensor.note('fullscreen_space', held);
+
+    const record = await l.daemon.handle(event('feishu-1'));
+    expect(record.tier).toBe('deferred');
+    expect(record.ok).toBe(true);
+    expect(record.reason).toContain('a full-screen application owns the active Space');
+    expect(l.sent).toEqual([]);
+    // Being on the other Space is not a failure of the scenario, so it must
+    // not even be recorded as an outcome.
+    expect(l.registry.trust().get('feishu-ping')).toBeUndefined();
+
+    // Every drain poll says the screen is unlocked, and none of them drains it.
+    expect((await l.drainer.tick()).executed).toEqual([]);
+    expect((await l.drainer.tick()).executed).toEqual([]);
+    expect(l.queue.pendingCount()).toBe(1);
+
+    l.sensor.clear('fullscreen_space');
+    const report = await l.drainer.tick();
+    expect(report.executed.map((action) => action.traceId)).toEqual(['feishu-1']);
+    expect(l.sent.map((args) => args['trace_id'])).toEqual(['feishu-1']);
+    expect(l.store.get('feishu-1:drained:q1')?.tier).toBe(QUEUE_TIERS.executed);
+  });
+
+  it('re-checks the premise when the Space is left, and holds a reply whose conversation has gone', async () => {
+    const l = loop();
+    await l.primed;
+    l.setLocked(false);
+    await l.drainer.tick();
+    l.sensor.note('fullscreen_space', held);
+    await l.daemon.handle(event('feishu-1'));
+
+    // Full screen ends, but the conversation it answered is not on screen.
+    l.setOpenChat('Someone Else');
+    l.sensor.clear('fullscreen_space');
+    const blocked = await l.drainer.tick();
+    expect(blocked.executed).toEqual([]);
+    expect(blocked.stoppedBecause).toContain('not the conversation on screen');
+    expect(l.sent).toEqual([]);
+
+    l.setOpenChat(CHAT);
+    expect((await l.drainer.tick()).executed.map((action) => action.traceId)).toEqual(['feishu-1']);
+    expect(l.sent.map((args) => args['trace_id'])).toEqual(['feishu-1']);
   });
 });

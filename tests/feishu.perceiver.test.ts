@@ -273,6 +273,39 @@ describe('the perceiver’s health gate', () => {
     expect(warnings.join('\n')).toContain('restart Feishu');
   });
 
+  it('says a full-screen Space once, however many polls it lasts, and never calls it fatal', async () => {
+    // `feishu.pollIntervalMs` is 3000 in the daemon and a person can sit in
+    // full screen for hours, so this is measured in hundreds of readings.
+    // `wedgedAfter: 1` is the escalation this must not reach: a diagnosed cause
+    // is an explanation, and an explained state never becomes a fault.
+    let polls = 0;
+    const fullScreen = new FeishuHealthMonitor({
+      pid: async () => 4242,
+      windows: async () => {
+        polls += 1;
+        return {
+          windows: [],
+          diagnosis: {
+            code: 'FULLSCREEN_SPACE',
+            message: 'the active Space belongs to a full-screen application (Google Chrome)',
+            details: { cgWindows: 6, onScreen: 0, space: { fullScreen: true, evidence: ['AXFullScreen'], frontmostApp: 'Google Chrome' } },
+          },
+        };
+      },
+      webAreas: async () => [],
+      config: { wedgedAfter: 1 },
+    });
+
+    const { perceiver, warnings, fatal, reads } = withMonitor(fullScreen);
+    expect(await collect(perceiver, 200)).toEqual([]);
+
+    expect(polls).toBeGreaterThan(1);
+    expect(warnings.filter((line) => line.includes('full-screen application'))).toHaveLength(1);
+    expect(fatal).toEqual([]);
+    // Feishu is never read while it has no window to read.
+    expect(reads()).toBe(0);
+  });
+
   it('says a locked screen out loud once, not on every poll', async () => {
     const locked = new FeishuHealthMonitor({
       pid: async () => 4242,

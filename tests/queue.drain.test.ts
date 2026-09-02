@@ -6,7 +6,7 @@ import { parseScenario } from '../src/core/scenario.js';
 import type { Scenario } from '../src/core/scenario.js';
 import { fail as toolFail, ok as toolOk } from '../src/execution/base.js';
 import type { ToolRunner } from '../src/execution/base.js';
-import { ScreenLockSensor } from '../src/queue/screenLock.js';
+import { ScreenSensor } from '../src/queue/screen.js';
 import { QueueJournal, QUEUE_TIERS } from '../src/queue/journal.js';
 import { PreconditionRegistry, broken, fixedChecker, holds, notYet } from '../src/queue/preconditions.js';
 import { QueueDrainer } from '../src/queue/drain.js';
@@ -31,7 +31,7 @@ interface Harness {
   readonly drainer: QueueDrainer;
   readonly queue: DeferredStore;
   readonly store: TrajectoryStore;
-  readonly sensor: ScreenLockSensor;
+  readonly sensor: ScreenSensor;
   readonly ran: { tool: string; args: Readonly<Record<string, string>> }[];
   readonly lines: string[];
   readonly setNow: (value: number) => void;
@@ -53,7 +53,7 @@ function harness(
 
   let now = NOW;
   let locked = true;
-  const sensor = new ScreenLockSensor({ probe: async () => ({ locked }), now: () => now });
+  const sensor = new ScreenSensor({ probe: async () => ({ locked }), now: () => now });
 
   const preconditions = new PreconditionRegistry();
   if (over.registerChecker !== false) preconditions.register(PREMISE, over.checker ?? fixedChecker(holds("'Ops' is open")));
@@ -106,6 +106,26 @@ describe('draining the queue after an unlock', () => {
     expect(report.stoppedBecause).toContain('screen: locked');
     expect(h.ran).toEqual([]);
     expect(h.queue.pendingCount()).toBe(1);
+  });
+
+  it('holds for a blocker no poll can see, and drains when a reading lifts it', async () => {
+    // The Mac is unlocked throughout: `env` reports the lock and says nothing
+    // about Spaces, so a poll that comes back unlocked is not permission to run.
+    const h = harness();
+    h.queue.add(request('a'), config(), NOW);
+    h.setLocked(false);
+    h.sensor.note('fullscreen_space', 'the active Space belongs to a full-screen application (Google Chrome)');
+
+    const held = await h.drainer.tick();
+    expect(held.executed).toEqual([]);
+    expect(held.stoppedBecause).toContain('a full-screen application owns the active Space');
+    expect(h.ran).toEqual([]);
+    expect(h.queue.pendingCount()).toBe(1);
+
+    h.sensor.clear('fullscreen_space');
+    const drained = await h.drainer.tick();
+    expect(drained.executed.map((action) => action.traceId)).toEqual(['a']);
+    expect(h.ran.map((call) => call.args['text'])).toEqual(['answer for a']);
   });
 
   it('runs what it was holding, in the order it was queued', async () => {
@@ -286,7 +306,7 @@ describe('draining the queue after an unlock', () => {
 
   it('stops when the screen locks again, and leaves the rest queued', async () => {
     // The lock comes back while the first action is running: the driver
-    // refuses, the sensor hears it through `noteLocked`, and the drain must
+    // refuses, the sensor hears it through `note`, and the drain must
     // not carry on into the second.
     let relock = (): void => undefined;
     const h = harness({
@@ -295,14 +315,14 @@ describe('draining the queue after an unlock', () => {
         return toolFail(`${tool} refused: the Mac is locked`, 1);
       },
     });
-    relock = () => h.sensor.noteLocked('the Mac is locked');
+    relock = () => h.sensor.note('locked', 'the Mac is locked');
 
     h.queue.add(request('a'), config(), NOW);
     h.queue.add(request('b'), config(), NOW);
     h.setLocked(false);
 
     const report = await h.drainer.tick();
-    expect(report.stoppedBecause).toContain('locked again mid-drain');
+    expect(report.stoppedBecause).toContain('went away again mid-drain');
     // The one that ran is not put back: part of it may already have happened,
     // and repeating a write is the mistake this whole mechanism prevents.
     expect(report.executed.map((action) => action.status)).toEqual(['failed']);
@@ -316,7 +336,7 @@ describe('draining the queue after an unlock', () => {
     // action after every lock run against a stale reading and fail.
     let probes = 0;
     const h = harness();
-    const sensor = new ScreenLockSensor({
+    const sensor = new ScreenSensor({
       probe: async () => {
         probes += 1;
         return { locked: false };
@@ -333,13 +353,13 @@ describe('draining the queue after an unlock', () => {
 
     expect(await drainer.tick()).toEqual({ executed: [], discarded: [], handedBack: [] });
     expect(probes).toBe(1);
-    expect(sensor.current().state).toBe('unlocked');
+    expect(sensor.current().state).toBe('available');
   });
 
   it('reports nothing at all when it is idle and the screen is locked', async () => {
     const h = harness();
     expect(await h.drainer.tick()).toEqual({ executed: [], discarded: [], handedBack: [] });
-    expect(h.sensor.locked).toBe(true);
+    expect(h.sensor.blocked).toBe(true);
   });
 
   it('stays out of the way entirely when the queue is switched off', async () => {
@@ -423,7 +443,7 @@ describe('draining the queue after an unlock', () => {
 
     // Aborting cuts the wait short rather than serving out the interval.
     expect(Date.now() - started).toBeLessThan(2_000);
-    expect(h.sensor.current().state).toBe('unlocked');
+    expect(h.sensor.current().state).toBe('available');
   });
 
   it('uses the wall clock when no clock is injected', async () => {

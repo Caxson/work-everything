@@ -10,21 +10,33 @@ final class Subscription {
     let element: AXUIElement
     let notifications: [String]
     var refcon: UnsafeMutableRawPointer?
+    /// The client's channel and handle space, captured when the subscription was made.
+    ///
+    /// An event fires from the run loop, long after the request that registered it and
+    /// with no request in flight — so `Connection.current` means nothing here. Holding the
+    /// two things the event needs is what keeps a notification going to the client that
+    /// asked for it, and its `nodeId` numbered in that client's space. Neither reference
+    /// points back at the connection, so there is no cycle to break.
+    private let sink: Output
+    private let elements: ElementRegistry
 
-    init(id: Int, pid: pid_t, observer: AXObserver, element: AXUIElement, notifications: [String]) {
+    init(id: Int, pid: pid_t, observer: AXObserver, element: AXUIElement, notifications: [String],
+         sink: Output, elements: ElementRegistry) {
         self.id = id
         self.pid = pid
         self.observer = observer
         self.element = element
         self.notifications = notifications
+        self.sink = sink
+        self.elements = elements
     }
 
     func deliver(element: AXUIElement, notification: String) {
-        Output.shared.emit(.object([
+        sink.emit(.object([
             "event": .string("ax"),
             "subscription": .int(id),
             "notification": .string(notification),
-            "nodeId": .int(ElementRegistry.shared.handle(for: element)),
+            "nodeId": .int(elements.handle(for: element)),
             "pid": .int(Int(pid))
         ]))
     }
@@ -38,13 +50,11 @@ private let axObserverCallback: AXObserverCallback = { _, element, notification,
 }
 
 /// Main-thread confined: AXObserver run loop sources are attached to the main run loop.
+/// One registry per client (see `Connection`), so a dropped connection takes its own
+/// subscriptions down and nobody else's.
 final class ObserverRegistry {
-    static let shared = ObserverRegistry()
-
     private var nextId = 1
     private var subscriptions: [Int: Subscription] = [:]
-
-    private init() {}
 
     func observe(pid: pid_t, element: AXUIElement, notifications: [String]) throws -> JSONValue {
         guard !notifications.isEmpty else { throw BridgeError.badRequest("'notifications' must not be empty") }
@@ -57,7 +67,8 @@ final class ObserverRegistry {
         let id = nextId
         nextId += 1
         let subscription = Subscription(id: id, pid: pid, observer: observer,
-                                        element: element, notifications: notifications)
+                                        element: element, notifications: notifications,
+                                        sink: Output.current, elements: ElementRegistry.current)
         let refcon = Unmanaged.passRetained(subscription).toOpaque()
         subscription.refcon = refcon
 

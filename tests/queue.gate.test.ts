@@ -4,7 +4,7 @@ import { TrajectoryStore } from '../src/memory/trajectory.js';
 import { DeferredStore } from '../src/memory/deferred.js';
 import { parseScenario } from '../src/core/scenario.js';
 import type { Scenario } from '../src/core/scenario.js';
-import { ScreenLockSensor } from '../src/queue/screenLock.js';
+import { ScreenSensor } from '../src/queue/screen.js';
 import { QueueJournal, QUEUE_TIERS } from '../src/queue/journal.js';
 import { ActionGate, type CaptureFn } from '../src/queue/gate.js';
 import { DEFAULT_DEFERRAL_CONFIG, type DeferralConfig } from '../src/queue/deferred.js';
@@ -24,7 +24,7 @@ interface Harness {
   readonly gate: ActionGate;
   readonly queue: DeferredStore;
   readonly store: TrajectoryStore;
-  readonly sensor: ScreenLockSensor;
+  readonly sensor: ScreenSensor;
   readonly lines: string[];
 }
 
@@ -33,8 +33,8 @@ function harness(over: { locked?: boolean; config?: Partial<DeferralConfig>; cap
   const store = new TrajectoryStore(db);
   let ids = 0;
   const queue = new DeferredStore(db, { id: () => `q${++ids}` });
-  const sensor = new ScreenLockSensor({ probe: async () => ({ locked: over.locked ?? true }) });
-  if (over.locked !== false) sensor.noteLocked('the Mac is locked');
+  const sensor = new ScreenSensor({ probe: async () => ({ locked: over.locked ?? true }) });
+  if (over.locked !== false) sensor.note('locked', 'the Mac is locked');
   const lines: string[] = [];
   const config: DeferralConfig = { ...DEFAULT_DEFERRAL_CONFIG, ...over.config };
 
@@ -152,6 +152,20 @@ describe('the admission gate', () => {
     expect(gate.needsScreen(chain('empty'))).toBe(false);
   });
 
+  it('queues for whichever blocker is in force, and says which one', async () => {
+    // The Mac is unlocked: this one is learned from a reading of an
+    // application, because no op that takes no window can see a Space.
+    const h = harness({ locked: false });
+    h.sensor.note('fullscreen_space', 'the active Space belongs to a full-screen application (Google Chrome)');
+
+    const admission = await h.gate.admit({ traceId: 'feishu-1', chain: chain('reply', 'feishu.reply'), vars: { text: 'pong' } });
+    expect(admission.admitted).toBe(false);
+    if (admission.admitted) return;
+    expect(admission.reason).toContain('a full-screen application owns the active Space');
+    expect(admission.reason).not.toContain('the screen is locked');
+    expect(h.queue.pending().map((action) => action.traceId)).toEqual(['feishu-1']);
+  });
+
   it('queues each of several actions separately while the lock holds', async () => {
     const { gate, queue } = harness();
     for (const traceId of ['a', 'b', 'c']) {
@@ -165,7 +179,7 @@ describe('the admission gate', () => {
     const open = harness({ locked: false });
     expect(open.gate.screenIsUnavailable()).toBe(false);
 
-    open.sensor.noteLocked('the Mac is locked');
+    open.sensor.note('locked', 'the Mac is locked');
     expect(open.gate.screenIsUnavailable()).toBe(true);
 
     const shut = harness();

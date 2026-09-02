@@ -32,18 +32,33 @@ import { z } from 'zod';
 import type { Scenario } from '../../core/scenario.js';
 import type { Executor, ToolResult } from '../base.js';
 import { describeError, fail, ok } from '../base.js';
+import type { ActionErrorCode } from '../../actions/errors.js';
 import { ActionError } from '../../actions/errors.js';
 import type { ActionDriver } from '../../actions/driver.js';
 import type { SnapshotElement, SnapshotStore } from '../../actions/snapshot.js';
 import type { ChatRouteTable } from '../../perception/feishu/chatRoutes.js';
 import type { FeishuReader } from '../../perception/feishu/reader.js';
-import type { FeishuHealthMonitor } from '../../perception/feishu/health.js';
+import type { FeishuHealthMonitor, FeishuHealthState } from '../../perception/feishu/health.js';
 import type { SentLedger } from '../../perception/feishu/sentLedger.js';
 import type { OpenChat } from '../../perception/feishu/elements.js';
 import { locateOpenChat } from '../../perception/feishu/elements.js';
 import { FEISHU_BUNDLE_ID, SEND_KEY } from '../../perception/feishu/selectors.js';
 
 export const FEISHU_REPLY_TOOL = 'feishu.reply';
+
+/**
+ * Health states that are the machine's, not this send's, and the code each one
+ * keeps on the way out.
+ *
+ * Flattening one of these into a plain `Error` is how the lock's deferral
+ * became dead code once: everything downstream branches on codes, and a caller
+ * handed only prose has to match sentences to tell a working Mac somebody is
+ * using from an application that has stopped answering.
+ */
+const HEALTH_REFUSALS: Readonly<Partial<Record<FeishuHealthState, ActionErrorCode>>> = {
+  screen_locked: 'SCREEN_LOCKED',
+  fullscreen_space: 'FULLSCREEN_SPACE',
+};
 
 /**
  * The reply, expressed as a one-entry chain.
@@ -196,14 +211,13 @@ export class FeishuExecutor implements Executor {
     // `require` throws on a wedged app; a merely absent window is an ordinary
     // failure of this send, not a reason to keep hammering the accessibility API.
     //
-    // A locked screen keeps its code rather than being flattened into prose.
     // Nothing on this path reaches a driver, so the action layer's own error
-    // channel never sees it; what the screen-lock sensor listens to is the
+    // channel never sees these; what the queue's sensor listens to is the
     // health monitor's verdict, which is the same helper diagnosis one step
-    // earlier. The code is kept anyway, because a caller that has to tell a
-    // locked Mac from a broken one should not be matching sentences.
+    // earlier. The code is kept anyway — see `HEALTH_REFUSALS`.
     const health = await this.deps.monitor.require();
-    if (health.state === 'screen_locked') throw new ActionError('SCREEN_LOCKED', health.detail);
+    const refusal = HEALTH_REFUSALS[health.state];
+    if (refusal !== undefined) throw new ActionError(refusal, health.detail);
     if (health.state !== 'ok') throw new Error(health.detail);
 
     const before = await this.read();
@@ -212,9 +226,16 @@ export class FeishuExecutor implements Executor {
     await this.write(before, composer, text);
 
     const staged = await this.read();
-    if (!contains(staged.chat?.composerText ?? '', text)) {
+    const readBack = staged.chat?.composerText ?? '';
+    if (!contains(readBack, text)) {
       await this.clearComposer(staged);
-      throw new Error('the composer does not contain the reply after typing it; nothing was sent');
+      // What came back matters more than the fact that it did not match: an
+      // empty composer means the keys never arrived, and a composer holding
+      // something else means they went somewhere they should not have.
+      throw new Error(
+        `the composer does not contain the reply after typing it; nothing was sent. ` +
+          `Wanted ${JSON.stringify(text)}, composer reads ${JSON.stringify(readBack)}`,
+      );
     }
 
     // Past this line the message is on its way, so the dedupe guard is armed

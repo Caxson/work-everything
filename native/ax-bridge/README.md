@@ -1,35 +1,94 @@
-# we-ax — macOS Accessibility bridge (stdio NDJSON)
+# we-ax — macOS Accessibility bridge (NDJSON)
 
-A deliberately thin Swift executable that exposes the macOS Accessibility (AX) API over
-stdin/stdout as newline-delimited JSON. It is the native half of the TypeScript daemon:
-the daemon owns all policy, `we-ax` owns nothing but AX calls.
+A deliberately thin Swift executable that exposes the macOS Accessibility (AX) API as
+newline-delimited JSON. It is the native half of the TypeScript daemon: the daemon owns all
+policy, `we-ax` owns nothing but AX calls.
 
-## Build
+## Build and run
 
 ```bash
 swift build -c release        # requires Xcode 15+/Swift 5.9+, macOS 13+
-./.build/release/we-ax        # reads NDJSON on stdin, writes NDJSON on stdout
+./.build/release/we-ax        # stdio: reads NDJSON on stdin, writes NDJSON on stdout
+./.build/release/we-ax --serve            # socket: many clients, stays resident
+./.build/release/we-ax --socket-path      # prints the default socket path
 ```
 
-Four checks. The first three touch nothing — they read, or they build event plans and
-stop. The fourth posts real events, and only ever at a throwaway probe application it
-compiles and launches itself:
+Both modes speak exactly the same protocol. The socket exists because of who macOS thinks
+is responsible for an Accessibility grant — see **Running as a service**, below, which is
+the difference between "a person can drive this from a terminal" and "an agent can use it".
+
+Six checks. Four touch nothing — they read, or build event plans and stop. Two post real
+events, and only ever at throwaway probe applications they compile and launch themselves:
 
 ```bash
 OUT_DIR=/tmp/we-ax scripts/smoke.sh                   # AX inspection; defaults to Feishu / Lark
 OUT_DIR=/tmp/we-ax scripts/smoke.sh "Safari"
-OUT_DIR=/tmp/we-ax scripts/input-regression.sh        # foreground event plans, 21 assertions
-OUT_DIR=/tmp/we-ax scripts/background-regression.sh   # background event plans, 37 assertions
+OUT_DIR=/tmp/we-ax scripts/input-regression.sh        # foreground event plans, 25 assertions
+OUT_DIR=/tmp/we-ax scripts/background-regression.sh   # background event plans, 46 assertions
+OUT_DIR=/tmp/we-ax scripts/socket-regression.sh       # serve mode and client isolation, 12 assertions
 OUT_DIR=/tmp/we-ax scripts/live-probe.sh              # end to end against its own probe app
+OUT_DIR=/tmp/we-ax scripts/caret-regression.sh        # the composer caret fix, A/B, 15 assertions
 ```
 
-`live-probe.sh` is the only one that posts anything. It never points at a message app, a
-browser, or any window belonging to the person using the machine: it builds `WeAxProbe`,
-opens two windows with a button at the exact centre of each, drives them, and kills it. The
-centred button is the test — an activation primer that lands in the middle of a window is
-caught by the button's own press counter rather than by inspection. It reports what it
-could not check rather than passing it, which matters because two of the states below take
-accessibility away entirely.
+`live-probe.sh` and `caret-regression.sh` are the only ones that post anything. Neither
+points at a message app, a browser, or any window belonging to the person using the machine.
+`live-probe.sh` builds `WeAxProbe`, opens two windows with a button at the exact centre of
+each, drives them, and kills it — the centred button is the test, because an activation
+primer that lands in the middle of a window is caught by the button's own press counter
+rather than by inspection. `caret-regression.sh` builds `CaretProbe`, a field that
+reproduces the measured caret reset, and A/Bs the fix against it. Both report what they
+could not check rather than passing it.
+
+## Running as a service
+
+macOS attributes an Accessibility grant to the **responsible process**, not to this binary.
+For a helper someone spawns, the responsible process is whoever spawned it — so the same
+`we-ax` answers `trusted: true` from a terminal descended from a granted app and
+`trusted: false` from a daemon that is not, and granting `we-ax` itself in System Settings
+changes neither, because the grant being consulted was never its own.
+
+That is fine for a person at a keyboard and fatal for an agent: it makes every automated run
+depend on a human starting it from the right place. Under launchd the binary is responsible
+for itself.
+
+```bash
+bash scripts/install-service.sh     # installs, starts, and prints the one-time instructions
+bash scripts/uninstall-service.sh
+```
+
+The installer copies the binary to `~/.work-everything/bin/we-ax` (not `.build/release`,
+which `swift build --clean` removes out from under a launchd job), writes
+`~/Library/LaunchAgents/com.work-everything.ax-bridge.plist` with `KeepAlive` and logs in
+`~/Library/Logs/work-everything`, bootstraps the job, and then connects to the socket and
+reports whether it is trusted.
+
+**The grant itself is still a person clicking a checkbox, once.** TCC cannot be given
+programmatically, and nothing here pretends otherwise — the installer prints the path to
+paste into System Settings > Privacy & Security > Accessibility and the `launchctl kickstart`
+line that makes the service pick it up. After that, any client that can open the socket uses
+that grant; none of them needs one of its own.
+
+Point the daemon at it with:
+
+```jsonc
+"axBridge": { "socketPath": "~/Library/Application Support/work-everything/we-ax.sock" }
+```
+
+Two things worth knowing. The grant is keyed to the binary at that path, so reinstalling a
+**rebuilt** we-ax can leave System Settings showing it as enabled while macOS refuses it —
+remove the entry and add it again if `trusted` goes false after a rebuild. And `shutdown`
+over a socket ends one client, not the service: a resident bridge any single caller could
+stop would be resident in name only.
+
+### What belongs to a client
+
+Handles, sessions and subscriptions are **per connection**. Two clients both number their
+`nodeId`s from 1, and one client's `nodeId: 7` must never resolve to the other's element —
+that failure would not raise an error, it would click the wrong window and answer `ok: true`.
+Losing a connection releases exactly that client's state, including any focus-suppression tap
+it installed, because a tap outliving its owner leaves somebody else's application filtered
+with nothing left to un-filter it. `env` reports `connection` and `transport` so a caller can
+see which bridge answered and that the `sessions`/`nodes` counts are its own.
 
 ## Protocol
 
@@ -270,6 +329,58 @@ match every sibling in a list. The focused element's ancestors are walked too, s
 landing on a text run inside the composer is focus on the composer. When nothing can be
 proven either way it refuses rather than types.
 
+### The composer resets its caret on the first character
+
+Typing `we ping` into Feishu's composer, one unicode key pair per character, three attempts
+at each of six per-character intervals:
+
+```
+   4ms  ["pingww", "pingwww", "e pingw"]
+  12ms  ["e pingw", "e pingw", "e pingw"]
+  25ms  40ms  60ms  90ms      all three attempts "e pingw"
+```
+
+Everything from 12ms up is stable and **stably wrong**. That is the finding: a race produces
+different wreckage every run, and this produces the same string every run — so **widening
+`perCharacterMs` cannot fix it**, and all it ever fixed was the 4ms case where two characters
+land inside one render. The mechanism reproduces `e pingw` exactly: the composer re-renders
+as it stops being empty, the caret goes back to 0, and every character after the first is
+inserted in front of the one before it.
+
+So the fix is a caret move. `focusAndType` types the first character, **polls the element's
+own text until it appears**, puts the caret back at the end, and types the rest — a poll
+rather than a sleep, because "the render finished" is observable and a duration is a guess.
+
+There is no single key for "caret to the end" either. Measured against `CaretProbe`, which
+reproduces the reset:
+
+| mechanism | selection after | where the next character went |
+|---|---|---|
+| nothing | 0 | `"Xw"` — in front |
+| `end` (119) | 0 | `"Xw"` — still in front |
+| `cmd`+`right` (124) | 1 | `"wX"` — appended |
+
+In the Cocoa text system `End` is `scrollToEndOfDocument:` — it scrolls and leaves the
+insertion point alone. Chromium honours it as a caret move, so it is still tried first: it
+has no side effect in either engine, while `Cmd`+`Right` is browser navigation whenever focus
+is not in a field. Both are sent in order and **each is read back from `AXSelectedTextRange`
+before it is believed**, the same discipline focus gets. A move that reads back as having
+failed answers `CARET_NOT_AT_END` and types nothing more, because inserting the rest at
+position 0 is the bug. An element that reports no selection is unknown rather than wrong:
+every mechanism is sent and `verified` comes back `false`.
+
+The recovery applies only where the reset does — an empty composer whose text can be read,
+with more than one character to type. A composer that already has text, a single character,
+and an element with no readable text all plan `none` and say why.
+
+`caretRecovery: false` reproduces the pre-fix behaviour on demand, for the same reason the
+`fields` switches exist: `scripts/caret-regression.sh` A/Bs both halves against the same
+element in the same run, and a fix whose "before" cannot be reproduced is a claim about a
+string somebody read once.
+
+`perCharacterMs` defaults to 4. **That number was chosen, not measured** — it keeps two key
+pairs out of one render, and the table above is what it was measured *not* to fix.
+
 Which key actually does the work depends on what the element exposes, and the measurement
 is worth stating because it is the opposite of what the names suggest:
 
@@ -324,13 +435,14 @@ flag mask of every event, so the two expensive bugs above are both statically ch
 The last event is the one that matters: it is the Command release that was missing when a
 stray `w` closed the window. The script checks routing, source state, zero-mask on plain
 keys, the full press/release choreography for one and two modifiers, uppercase as Shift+key,
-unicode fallback, refusal of modifiers on the unicode path, and `cghidEventTap` routing plus
-argument validation for clicks — 21 assertions, no side effects.
+unicode fallback, refusal of modifiers on the unicode path, the two keycodes `focusAndType`
+uses to move a caret, and `cghidEventTap` routing plus argument validation for clicks — 25
+assertions, no side effects.
 
 ## Permissions
 
-Every AX op except `trusted` and `apps` is gated on `AXIsProcessTrusted()` and returns
-`NOT_TRUSTED` when the grant is missing.
+Every AX op except `trusted`, `apps`, `env` and `shutdown` is gated on
+`AXIsProcessTrusted()` and returns `NOT_TRUSTED` when the grant is missing.
 
 macOS attributes Accessibility permission to the **responsible process**, not to this
 binary. Verified on this machine: an ad-hoc-re-signed copy of `we-ax` at a different path,
@@ -345,13 +457,31 @@ run from a detached shell, is still trusted — because its ancestor (the Claude
 * `{"id":1,"op":"trusted","prompt":true}` raises the system dialog, which deep-links to the
   right pane for whichever executable macOS holds responsible.
 
+Those rules are the reason `--serve` exists. Inheriting somebody else's grant means the
+answer depends on the caller, which is unworkable for an unattended agent — see **Running as
+a service**. As a launchd job the binary is its own responsible process, granted once by
+hand; and there the last rule inverts, because the grant *is* attached to it: a rebuilt
+binary at the same path can need re-granting.
+
 ## Threading
 
-The main thread runs `CFRunLoopRun()` so `AXObserver` run-loop sources can fire. A
-background thread does blocking stdin reads and hands each request to the main thread via
-`DispatchQueue.main.sync`, which keeps request ordering and lets the element/observer
-registries stay lock-free. All stdout writes — responses and events alike — go through one
-lock in `Output` and are flushed per line. Closing stdin tears down observers and exits.
+The main thread runs `CFRunLoopRun()` so `AXObserver` run-loop sources can fire, and every
+op executes there.
+
+* **stdio** — a background thread does blocking stdin reads and hands each request to the
+  main thread via `DispatchQueue.main.sync`, which keeps request ordering and lets the
+  registries stay lock-free. Closing stdin tears the client down and exits.
+* **socket** — the listener and each client's reads are `DispatchSource`s on the main queue,
+  which the same run loop drains, so a request already arrives on the thread AX has to be
+  called from and there is no hand-off to get wrong.
+
+Writes go through one lock per channel in `Output` and are flushed per line. A sink is
+invalidated before its descriptor is closed, because descriptor numbers are reused
+immediately and a subscription that outlived its client would otherwise deliver one client's
+events into the next client's socket. `SIGPIPE` is ignored and every accepted socket carries
+`SO_NOSIGPIPE` and a send timeout, so a client that vanishes mid-reply cannot take the
+service — and everybody else's sessions — down with it. `SIGTERM`, which is how launchd
+stops a job, releases every session before exiting.
 
 Every application element gets a 2 s AX messaging timeout, so a wedged target degrades to
 `AX_ERROR(-25204)` instead of hanging the bridge.

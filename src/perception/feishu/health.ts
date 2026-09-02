@@ -1,17 +1,18 @@
 /**
  * Is Feishu readable right now?
  *
- * Six states, because "there is no window to read" has six different causes
- * and they call for six different responses. Getting this wrong is expensive
- * in both directions: a cause reported as a fault invites somebody to restart
- * a working application, and a fault reported as a wait is a daemon that
- * quietly does nothing forever.
+ * Seven states, because "there is no window to read" has seven different
+ * causes and they call for seven different responses. Getting this wrong is
+ * expensive in both directions: a cause reported as a fault invites somebody
+ * to restart a working application, and a fault reported as a wait is a daemon
+ * that quietly does nothing forever.
  *
  * | state | what it means | what a person should do |
  * |---|---|---|
  * | `ok` | a real window with web content in it | nothing |
  * | `no_window` | closed to the tray, or only a modal is open | nothing; it resolves itself |
  * | `screen_locked` | the screen is locked | unlock it |
+ * | `fullscreen_space` | a full-screen app owns the active Space | nothing; it resolves when they leave full screen |
  * | `desktop_blank` | nothing on the machine is being drawn | wait for the screen saver to exit |
  * | `not_drawn` | Feishu's windows exist but none is on screen | bring it to a space that is drawing |
  * | `wedged` | the app is up, its accessibility layer is not | restart Feishu |
@@ -39,6 +40,16 @@
  * `details.screenSaverOnScreen` and this file consumes it rather than
  * inventing one.
  *
+ * The Space is the second cause whose obvious detection is wrong, and it was
+ * the `desktop_blank` message that got it wrong: `scope: "desktop"` used to be
+ * the helper's inference from `desktopOwnersOnScreen <= 1`, and one full-screen
+ * application is exactly one owner on screen. Measured with Chrome full screen
+ * and 飞书 on the other Space, that reported a machine drawing nothing while
+ * Chrome was drawing at 1728x1003 and somebody was typing into it. The helper
+ * now derives `scope: "desktop"` from `desktopOnScreen == 0` — nothing anywhere
+ * on screen — and reports the Space separately, in `details.space`, so the two
+ * questions are answered by the two signals that address them.
+ *
  * `wedged` stays terminal and stays hard to reach: only an app that has
  * windows the helper can address, and no web content in them, across several
  * readings, earns it. Every diagnosed cause is an explanation, and an
@@ -47,7 +58,7 @@
 import type { AxNode, WindowDiagnosis } from '../macos/axProtocol.js';
 import { MODAL_WINDOW_PREFIX, ROLE, WEB_AREA } from './selectors.js';
 
-export const FEISHU_HEALTH_STATES = ['ok', 'no_window', 'screen_locked', 'desktop_blank', 'not_drawn', 'wedged'] as const;
+export const FEISHU_HEALTH_STATES = ['ok', 'no_window', 'screen_locked', 'fullscreen_space', 'desktop_blank', 'not_drawn', 'wedged'] as const;
 export type FeishuHealthState = (typeof FEISHU_HEALTH_STATES)[number];
 
 export interface FeishuHealth {
@@ -60,6 +71,7 @@ export interface FeishuHealth {
 /** States where trying again cannot help until something outside changes. */
 export const FEISHU_STUCK_STATES: ReadonlySet<FeishuHealthState> = new Set<FeishuHealthState>([
   'screen_locked',
+  'fullscreen_space',
   'desktop_blank',
   'not_drawn',
   'wedged',
@@ -111,6 +123,8 @@ function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis): FeishuHealth | 
         pid,
         detail: 'the screen is locked, so no window can be addressed; unlock it and this resolves itself. Nothing is retried until then.',
       };
+    case 'FULLSCREEN_SPACE':
+      return fullScreenSpace(pid, diagnosis);
     case 'NO_WINDOW':
       return { state: 'no_window', pid, detail: `Feishu shows no window (closed to the tray, or a menu-bar-only state). ${census(diagnosis)}`.trim() };
     case 'AX_SEES_NO_WINDOWS_BUT_CG_DOES':
@@ -125,15 +139,21 @@ function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis): FeishuHealth | 
 /**
  * Windows exist and none of them is drawn — but why.
  *
- * Evidence first: `screenSaverOnScreen` is a fact about a window the window
- * server is compositing, and it gets its own answer because the advice is
- * completely different — wait, and do not go looking for a password.
+ * The full-screen Space is asked first, in the helper's own order: it is the
+ * one cause here where the desktop is compositing perfectly well, and reading
+ * it as any of the others produces advice about a machine that is fine. A
+ * helper that reports the census without the code lands here rather than in
+ * `fromDiagnosis`, so the same fact is honoured from either direction.
  *
- * `scope: "desktop"` is second, and is the helper's inference from
- * `desktopOwnersOnScreen <= 1`: a desktop where only one process has anything
- * on screen genuinely is not compositing. That is stricter and rarer than a
- * screen saver displaying, which was measured at eight owners still drawing,
- * so it does not cover that case and is not stretched to pretend it does.
+ * `screenSaverOnScreen` is second: a fact about a window the window server is
+ * compositing, and it gets its own answer because the advice is different
+ * again — wait, and do not go looking for a password.
+ *
+ * `scope: "desktop"` is third, and now means what it says: the helper derives
+ * it from `desktopOnScreen == 0`, nothing anywhere being drawn. It was
+ * `desktopOwnersOnScreen <= 1` until a single full-screen application — one
+ * owner, drawing at 1728x1003 — was reported through it as a desktop that was
+ * not compositing.
  *
  * Worth knowing about the first branch: the helper measured
  * `screenSaverOnScreen` directly only in the **negative** — an idle saver
@@ -145,6 +165,7 @@ function fromDiagnosis(pid: number, diagnosis: WindowDiagnosis): FeishuHealth | 
  */
 function notDrawn(pid: number, diagnosis: WindowDiagnosis): FeishuHealth {
   const details = diagnosis.details;
+  if (details?.space?.fullScreen === true) return fullScreenSpace(pid, diagnosis);
   if (details?.screenSaverOnScreen === true) {
     return {
       state: 'desktop_blank',
@@ -173,6 +194,34 @@ function notDrawn(pid: number, diagnosis: WindowDiagnosis): FeishuHealth {
     detail: (
       'Feishu has windows that are not being drawn — another space, minimised, or something covering the desktop. ' +
       `The Mac is not locked, so unlocking is not what is needed. ${notTheSaver} ${census(diagnosis)}`
+    )
+      .replace(/\s+/g, ' ')
+      .trim(),
+  };
+}
+
+/**
+ * A full-screen application owns the active Space.
+ *
+ * The remedy is to wait, and the message has to say so plainly, because every
+ * other reading of "no window" invites somebody to go and fix something: this
+ * one is a working Mac being used by a person, and the only thing that changes
+ * it is that person leaving full screen. The application is named when the
+ * helper could read the private Space list, and omitted rather than guessed at
+ * when it could not.
+ */
+function fullScreenSpace(pid: number, diagnosis: WindowDiagnosis): FeishuHealth {
+  const space = diagnosis.details?.space;
+  const app = space?.frontmostApp;
+  const evidence = space?.evidence ?? [];
+  return {
+    state: 'fullscreen_space',
+    pid,
+    detail: (
+      `the active Space belongs to a full-screen application${app === undefined ? '' : ` (${app})`}, and macOS composites no ` +
+      'window that lives on another Space — accessibility follows the compositor, so every application on the other Space ' +
+      'reads as having no window. Nothing is wrong with the machine and retrying will not help: this waits until the person ' +
+      `leaves full screen. ${evidence.length === 0 ? '' : `Evidence: ${evidence.join(', ')}.`} ${census(diagnosis)}`
     )
       .replace(/\s+/g, ' ')
       .trim(),

@@ -26,7 +26,7 @@ enum JSONCoercion {
             return dictionary(value, truncate: truncate)
         case AXUIElementGetTypeID():
             let element = value as! AXUIElement
-            return .object(["nodeId": .int(ElementRegistry.shared.handle(for: element))])
+            return .object(["nodeId": .int(ElementRegistry.current.handle(for: element))])
         case AXValueGetTypeID():
             return axValue(value as! AXValue)
         case CFURLGetTypeID():

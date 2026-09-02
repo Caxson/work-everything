@@ -6,14 +6,64 @@ between them; neither side may extend it unilaterally.
 
 ## Transport
 
-One JSON object per line (NDJSON) over the helper's stdin and stdout. UTF-8,
-`\n` as the delimiter, no framing headers. Anything the helper writes to
-stderr is diagnostics, never protocol.
+One JSON object per line (NDJSON). UTF-8, `\n` as the delimiter, no framing
+headers. Anything the helper writes to stderr is diagnostics, never protocol.
 
-A message arriving in either direction may be split across pipe writes; both
-sides buffer until a newline. A line the helper cannot parse is answered with
-a failure carrying `"id": -1` — it never terminates the connection. The client
+Two ways to carry it, byte for byte identical:
+
+| mode | command | who is served |
+|---|---|---|
+| stdio | `we-ax` | one client, on the helper's stdin and stdout |
+| socket | `we-ax --serve [path]` | many clients, on an `AF_UNIX` stream socket |
+
+A message arriving in either direction may be split across writes; both sides
+buffer until a newline. A line the helper cannot parse is answered with a
+failure carrying `"id": -1` — it never terminates the connection. The client
 skips lines it cannot parse.
+
+### Why the socket exists
+
+macOS attributes an Accessibility grant to the **responsible process**, which
+for a spawned helper is whoever launched it — not the helper. So the same
+binary answers `trusted: true` when a terminal spawns it and `trusted: false`
+when a daemon does, and granting the binary in System Settings changes
+neither, because the grant being consulted was never its own. That makes the
+spawn transport unusable for an unattended agent: it can only work when a
+person starts it from something already granted.
+
+Run as a launchd agent, the binary is responsible for itself. It is granted
+once, by hand, and every client that can open its socket borrows that grant.
+`native/ax-bridge/scripts/install-service.sh` installs it and prints the
+one-time instructions; nothing installs the grant itself, because TCC is
+deliberately not programmable.
+
+Default socket path, printed by `we-ax --socket-path`:
+
+```
+~/Library/Application Support/work-everything/we-ax.sock
+```
+
+The directory is created 0700 and the socket 0600. A socket file left behind
+by a process that died is removed on start; one that is still being served is
+not, and the second instance refuses with `SOCKET_IN_USE` rather than stealing
+the address.
+
+### What belongs to a connection, not to the process
+
+Everything a client can name is **per connection**: `nodeId` handles,
+`session` ids, `subscription` ids, and where observer events are delivered.
+Two clients both number from 1, and one client's `nodeId: 7` is not the
+other's — a shared registry would resolve it to the wrong element and answer
+`ok: true`, which is a click on the wrong window.
+
+Losing a connection releases exactly that client's state: its sessions
+(including any focus-suppression tap), its observers, its handles.
+`shutdown` does the same and is **not** a way to stop the service: over a
+socket it ends one client and leaves the bridge running for the rest. Over
+stdio it still exits the process, because there is nobody else.
+
+`env` reports `connection` and `transport` so a caller can tell which bridge
+answered and see that `sessions` and `nodes` are its own counts.
 
 ## Requests (client → helper)
 
@@ -71,15 +121,15 @@ Unsolicited, delivered while a subscription is live. No `id`.
 | `click` | `nodeId` \| (`x`, `y`), `button?`, `clickCount?`, `modifiers?`, `dryRun?` | `{"ok": true, "plan"}` |
 | `observe` | `pid`, `notifications`, `nodeId?` | `{"subscription", "registered", "failed"}` |
 | `unobserve` | `subscription` | `{"subscription", "ok": true}` |
-| `env` | — | `{"trusted", "cursor", "frontmost", "spi", "screen", "sessions", "nodes"}` |
+| `env` | — | `{"trusted", "cursor", "frontmost", "spi", "screen", "sessions", "nodes", "connection", "transport"}` |
 | `scroll` | `nodeId` \| (`x`, `y`), `deltaX?`, `deltaY?`, `unit?`, + background params | `{"ok": true, "plan"}` |
 | `windowInfo` | `pid` | `{"pid", "windows", "diagnosis", "addressable", "windowServer", "desktop", "spi", "screen"}` |
 | `awaitTree` | `pid`, `timeoutMs?`, `pollMs?`, `windowIndex?`, `maxNodes?`, `maxDepth?` | `{"ready", "nodes", "webAreas", "polls", "elapsedMs"}` |
 | `activate` | `pid`, `windowNumber?` \| `windowIndex?`, `safePoint?`, `fields?` | `{"windowNumber", "primer", "safePoint", "addressing", "invariants"}` |
 | `bgSession` | `pid`, `windowNumber?` \| `windowIndex?`, `activate?`, `safePoint?`, `suppressFocus?`, `dropTypes?`, `fields?` | `{"session", "pid", "windowNumber", "suppression", "activation?", "invariants"}` |
 | `bgRelease` | `session`, `restore?` | `{"session", "released", "restored", "suppression?"}` |
-| `focusAndType` | `nodeId`, `text`, `pid` \| `session`, `windowNumber?`, `focusVia?`, `focusAction?`, `activate?`, `perCharacterMs?`, `dryRun?` | `{"ok", "focused", "typed", "plan", "invariants"}` |
-| `shutdown` | — | `{"ok": true}`, then the helper exits |
+| `focusAndType` | `nodeId`, `text`, `pid` \| `session`, `windowNumber?`, `focusVia?`, `focusAction?`, `activate?`, `perCharacterMs?`, `caretRecovery?`, `caretTimeoutMs?`, `caretPollMs?`, `dryRun?` | `{"ok", "focused", "typed", "plan", "invariants"}` |
+| `shutdown` | — | `{"ok": true}`, then this **client** goes away |
 
 Defaults: `tree` uses `maxDepth` 12 and `maxNodes` 5000; `find` uses 60 and
 30000. `press` defaults `action` to `AXPress`. `click` defaults `button` to
@@ -248,6 +298,105 @@ mismatch proves they are different elements.
 The plan carries `"verifiesFocus": true`, so the guarantee is checkable in a dry
 run. `dryRun` performs no focus and sends nothing.
 
+#### The composer resets its caret on the first character
+
+Typing `we ping` into Feishu's composer, one unicode key pair per character,
+three attempts at each of six intervals:
+
+```
+   4ms  ["pingww", "pingwww", "e pingw"]
+  12ms  ["e pingw", "e pingw", "e pingw"]
+  25ms  40ms  60ms  90ms      all three attempts "e pingw"
+```
+
+Everything from 12ms up is stable and **stably wrong**, and that is the whole
+finding: a race produces different wreckage every run, this produces the same
+string every run. **Widening `perCharacterMs` does not help, because there is
+no race to lose.** All it fixes is the 4ms case, where two characters land
+inside a single render.
+
+The mechanism reproduces `e pingw` exactly:
+
+```
+type w  -> "w"       caret 1
+the composer re-renders as it goes from empty to non-empty; the caret returns to 0
+type e  -> "ew"      caret 1
+type ␣  -> "e w"     caret 2
+type p  -> "e pw"    caret 3
+type i  -> "e piw" ; n -> "e pinw" ; g -> "e pingw"
+```
+
+So the answer is a caret move, not a delay. `focusAndType` types the first
+character, **polls the element's own text until that character appears**, puts
+the caret back at the end, and types the rest. The wait is a poll rather than a
+sleep because "the render finished" is observable and a duration is not; a
+`CARET_NOT_SETTLED` error says so honestly, and reports that one character was
+sent.
+
+There is no single key for "caret to the end", which is the same shape of
+problem `focusVia` solves for focus. Measured against a probe that reproduces
+the reset (`scripts/caret-regression.sh`), typing one character and then one
+more:
+
+| mechanism | selection after | where the next character went |
+|---|---|---|
+| nothing | 0 | `"Xw"` — in front |
+| `end` (keycode 119) | 0 | `"Xw"` — still in front |
+| `cmd`+`right` (124) | 1 | `"wX"` — appended |
+
+In the Cocoa text system `End` is `scrollToEndOfDocument:`: it scrolls the view
+and leaves the insertion point where it was. Chromium honours it as a caret
+move, which is why it is still tried first — it has no side effect in either
+engine, while `Cmd`+`Right` is browser navigation whenever focus is *not* in a
+text field. Both are sent in order and **each is read back from
+`AXSelectedTextRange` before it is believed**, exactly as focus is. A move that
+can be read back and provably did not work answers `CARET_NOT_AT_END` and types
+nothing further, because inserting the rest at position 0 is the bug. An element
+that reports no selection at all is unknown rather than wrong: every mechanism
+is sent, the run continues, and `caretMove.verified` is `false`.
+
+The recovery applies only where the reset does:
+
+| composer | plan | why |
+|---|---|---|
+| empty, text readable | `caretToEnd` | the measured case |
+| already has text | `none` | the reset is the empty-to-non-empty edge |
+| one character to type | `none` | nothing follows it that could be misplaced |
+| no readable text | `none` | the first character landing cannot be observed, and claiming otherwise would turn every write into a timeout |
+
+The decision is taken from the element before anything is focused or typed, so a
+dry run reports the decision rather than the mechanism:
+
+```jsonc
+"caret": {"recovery": "caretToEnd", "watchesFirstCharacter": true, "verifiesCaret": true,
+          "afterCharacters": 1, "budget": {"timeoutMs": 1500, "pollMs": 20, "caretSettleMs": 250},
+          "mechanisms": [{"name": "end", "key": "end", "keyCode": 119, "modifiers": []},
+                         {"name": "cmdRight", "key": "right", "keyCode": 124, "modifiers": ["cmd"]}]}
+```
+
+and a live run adds what happened:
+
+```jsonc
+"caret": {"applied": true,
+          "firstCharacter": {"landed": true, "polls": 1, "elapsedMs": 4},
+          "caretMove": {"movedBy": "cmdRight", "verified": true, "offset": 1,
+                        "characters": 1, "attempted": ["end", "cmdRight"]}}
+```
+
+`caretRecovery: false` types the way the bridge did before all of this. It exists
+for the same reason the `fields` switches do — so the measurement can be
+reproduced against the same element in the same run instead of taken on trust —
+and for nothing else.
+
+`perCharacterMs` defaults to 4. **That number was chosen, not measured.** It is
+there to keep two unicode key pairs from arriving inside one render, and the
+table above is what it was measured *not* to fix.
+
+Where focus leaves the caret in a composer that already has text is a separate
+question this op has never answered — measured against the probe, typing `tail`
+into `seed ` produces `tailseed `. It is untouched here: it is not the reset, and
+the send path only ever writes into an empty composer.
+
 ### `bgSession` — reusing a target, and the optional suppression layer
 
 A session is a convenience: it holds a resolved target and the field options so
@@ -320,19 +469,38 @@ against two it cannot fix. Each leaves as its own error:
 | `SCREEN_LOCKED` | the count is right and every entry is the application element itself | only a person unlocking the machine |
 | `AX_SEES_NO_WINDOWS_BUT_CG_DOES` | accessibility returns success with nothing, while the window server has windows for this process and none on screen | nothing in code; the window never reached the screen |
 | `NO_WINDOW` | there genuinely is no window — a menu-bar agent, an app closed to the tray | showing the window |
+| `FULLSCREEN_SPACE` | the active Space belongs to a full-screen application, so every application on the other Spaces reads as having no window | waiting until the person leaves full screen, or addressing an application on this Space |
 
 The classification runs on the **unfiltered** window list. The self-referential
 placeholders that make an application its own child have to be filtered out
 before a tree can be walked, and those same placeholders are the entire evidence
 for the first case — so the diagnosis is taken first and filtering happens after.
 
-`AX_SEES_NO_WINDOWS_BUT_CG_DOES` carries a whole-machine census in `details`,
-because one application with no on-screen window is that application's problem
-while *nothing* on screen but the frontmost application means the desktop is not
-compositing at all. A running screen saver does exactly that with the session
-still unlocked, and it takes accessibility windows away from every application at
-once — measured on this machine, with `CGSSessionScreenIsLocked` false
-throughout. Checking the lock alone is not enough.
+Both carry a whole-machine census in `details`, because one application with no
+on-screen window is that application's problem while *nothing* on screen anywhere
+means the desktop is not compositing at all. A running screen saver does the
+latter with the session still unlocked, taking accessibility windows away from
+every application at once — measured on this machine, with
+`CGSSessionScreenIsLocked` false throughout. Checking the lock alone is not
+enough.
+
+The census counts **windows**, not owners. `desktopOwnersOnScreen <= 1` used to
+stand in for "the desktop is not compositing", and a single full-screen
+application produces exactly that reading: measured with Chrome full-screen at
+1728x1003 and a person actively typing, the helper reported a machine that was
+drawing nothing. `scope` is now `desktop` only when `desktopOnScreen` is zero,
+and the full-screen case has a code of its own.
+
+`FULLSCREEN_SPACE` carries `details.space`: `fullScreen`, the `evidence` that
+said so, and — when the private Space list is readable — `spaces`,
+`currentSpaceType` and `frontmostApp`. Two independent signals are consulted
+because each alone has a hole. `AXFullScreen` on the frontmost application's
+windows is public API but sees only the frontmost application; the managed Space
+list is authoritative about which Space is current but is private, and a macOS
+that stops vending it must degrade to the public signal rather than to a wrong
+answer. Measured: with Chrome full-screen, 飞书 exposed zero accessibility
+windows and six CGWindows with none on screen; activating it produced exactly one
+addressable window of 1397x937; returning Chrome to the front removed it again.
 
 `windows` with `"meta": true` returns `{"windows": [], "diagnosis": {}}` instead
 of throwing, for a caller that would rather branch than catch. Neither form can
@@ -392,10 +560,11 @@ is empty at the depth or node limit. `find` and `windows` results carry no
 String fields in nodes are truncated to 200 characters with a trailing `…`.
 `attr` does not truncate.
 
-`nodeId` is a handle allocated by the helper process. It is meaningful only to
-the helper that issued it and only for the lifetime of that process. The same
-element always receives the same handle within one process, across ops. A
-handle says nothing about whether the underlying element still exists — an op
+`nodeId` is a handle allocated by the helper. It is meaningful only to the
+**connection** that issued it and only for that connection's lifetime — over
+stdio those are the same thing as the process, over a socket they are not. The
+same element always receives the same handle within one connection, across ops.
+A handle says nothing about whether the underlying element still exists — an op
 naming a stale node returns an error, it does not crash.
 
 ### Selector
@@ -478,11 +647,16 @@ its frame — or an explicit screen point. An element with no usable
 | `SCREEN_LOCKED` | the screen is locked; accessibility substitutes the application element for every window. Only a person can clear it — do not retry |
 | `AX_SEES_NO_WINDOWS_BUT_CG_DOES` | accessibility exposes no window while the window server has them and none on screen. `details` says whether it is this application or the whole desktop |
 | `NO_WINDOW` | the application genuinely has no window, or the named `windowNumber` is not one of its |
+| `FULLSCREEN_SPACE` | the active Space belongs to a full-screen application; applications on the other Spaces are not composited and expose no accessibility window. Wait, do not retry |
 | `NO_SAFE_POINT` | no point in the window is clear of something clickable, so activation refused to click at all. Pass an explicit `safePoint` |
 | `TREE_NOT_READY` | no `AXWebArea` appeared within the timeout; `details` carries the node and web-area counts that were seen |
 | `NO_SUCH_SESSION` | the `session` is unknown or already released |
 | `TAP_FAILED` | a per-process event tap could not be created (`suppressFocus` only) |
 | `FOCUS_FAILED` | every focus mechanism was tried and none applied; `details` lists what was attempted and what the element advertises |
+| `CARET_NOT_SETTLED` | the first character never appeared in the element within the budget, so the caret could not be put back and the rest was not typed. One character was sent |
+| `CARET_NOT_AT_END` | the caret move was read back and provably did not work, so the rest was not typed. One character was sent |
+| `SOCKET_IN_USE` | `--serve` found another we-ax already serving that path and refused to take it over |
+| `SOCKET_PATH_TOO_LONG` / `SOCKET_BIND_FAILED` / `SOCKET_LISTEN_FAILED` / `SOCKET_DIR_FAILED` | `--serve` could not bind; the message carries the path and the errno |
 
 `AX_ERROR` is **parameterized**: the code carries the numeric `AXError` inside
 parentheses, e.g. `AX_ERROR(-25205)` for `attributeUnsupported`. Clients that
@@ -500,7 +674,11 @@ one capability a locked screen leaves standing. Refusing it would cost the only
 thing that still works and protect nobody.
 
 The client adds `binary_missing`, `not_running`, `timeout`, `write_failed`,
-`spawn_failed` and `bridge_exited` locally; the helper never sends those.
+`spawn_failed`, `bridge_exited`, `service_unavailable` and `socket_failed`
+locally; the helper never sends those. `service_unavailable` is the socket
+transport's, and it names the remedy rather than the errno — a socket that is
+not there means the service was never installed, a socket that refuses means it
+is installed and stopped, and the two send somebody to different places.
 
 ## Lifecycle
 
@@ -513,6 +691,15 @@ The client adds `binary_missing`, `not_running`, `timeout`, `write_failed`,
    empty" — so a `windowIndex` scope inherits that classification instead of
    silently walking the menu bar.
 5. `observe` returns a subscription id; events flow until `unobserve` or exit.
-6. `shutdown` answers, releases observers and exits. Closing the helper's stdin
-   does the same. Any request still unanswered when the pipe closes is failed
-   locally with `bridge_exited`.
+6. `shutdown` answers, then releases this client's sessions, observers and
+   handles. Closing the helper's stdin — or dropping the socket — does the same.
+   Over stdio the process then exits; over a socket the service stays up for
+   every other client. Any request still unanswered when the channel closes is
+   failed locally with `bridge_exited`.
+
+A socket client never needs steps 1 and 2 to install anything: the service is
+already running and already granted, so `trusted` is a check, not a setup step.
+If it answers `false`, somebody has to grant the binary
+`~/.work-everything/bin/we-ax` in System Settings once — see
+`native/ax-bridge/scripts/install-service.sh`, which prints the exact path and
+the `launchctl kickstart` line that picks the grant up.

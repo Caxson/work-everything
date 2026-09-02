@@ -101,23 +101,36 @@ check "focusAndType verifies focus"      "true"   "$(f 31 '.result.plan.verifies
 check "and reports the strategy"         "auto"   "$(f 31 '.result.plan.focusVia')"
 check "a dry run types nothing"          "true"   "$(f 31 '.result.dryRun')"
 
+# 7b — the caret decision is part of the plan, so it is visible without typing. This node is
+#      the application element: it exposes no text at all, and the one thing that must never
+#      happen is claiming a recovery it cannot perform — a watch on text it cannot read would
+#      turn every write into a timeout. The live A/B, against a probe that actually resets its
+#      caret, is scripts/caret-regression.sh.
+check "the plan carries a caret decision" "true"  "$(f 31 '.result.plan | has("caret")')"
+check "an unreadable element plans none"  "none"  "$(f 31 '.result.plan.caret.recovery')"
+check "and says it is not watching"       "false" "$(f 31 '.result.plan.caret.watchesFirstCharacter')"
+check "and explains why"                  "true"  "$(f 31 '.result.plan.caret | has("reason")')"
+check "per-character gap is reported"     "4"     "$(f 31 '.result.plan.perCharacterMs')"
+
 # 8 — errors, including the ones a caller must be able to tell apart.
 check "unknown node is refused"            "NO_SUCH_NODE"    "$(q 9 '.error.code')"
 check "unknown session is refused"         "NO_SUCH_SESSION" "$(q 10 '.error.code')"
 
 # 9 — a window list that cannot be trusted is reported as such, never as an empty list.
-#     Whichever of these three the machine is in right now, none of them may answer "ok
-#     with no windows" and let a caller retry forever.
+#     Whichever of these the machine is in right now, none of them may answer "ok with no
+#     windows" and let a caller retry forever. FULLSCREEN_SPACE is one of them: a full-screen
+#     application owns the active Space and every application on the others reads as having
+#     no window, which is a state to wait out rather than a failure to retry.
 check "windowInfo always answers"             "true" "$(q 11 '.ok')"
 check "windowInfo carries the desktop census" "true" "$(q 11 '.result.desktop | has("onScreenOwners")')"
 check "windowInfo carries the SPI census"     "true" "$(q 11 '.result.spi | has("axGetWindow")')"
 check "windowInfo carries a diagnosis"        "true" "$(q 11 '.result.diagnosis | has("code")')"
 WI_CODE=$(q 11 '.result.diagnosis.code')
 case "$WI_CODE" in
-  OK|SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW)
+  OK|SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW|FULLSCREEN_SPACE)
     check "diagnosis is one of the known states" "$WI_CODE" "$WI_CODE" ;;
   *) check "diagnosis is one of the known states" \
-           "OK|SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW" "$WI_CODE" ;;
+           "OK|SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW|FULLSCREEN_SPACE" "$WI_CODE" ;;
 esac
 if [ "$WI_CODE" != "OK" ]; then
   check "a failing diagnosis explains itself"  "true" "$(q 11 '.result.diagnosis | has("message")')"
@@ -158,10 +171,10 @@ if [ "$BARE_OK" = "true" ]; then
 else
   CODE=$(w 20 '.error.code')
   case "$CODE" in
-    SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW)
+    SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW|FULLSCREEN_SPACE)
       check "empty list is thrown as a classified error" "$CODE" "$CODE" ;;
     *) check "empty list is thrown as a classified error" \
-             "SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW" "$CODE" ;;
+             "SCREEN_LOCKED|AX_SEES_NO_WINDOWS_BUT_CG_DOES|NO_WINDOW|FULLSCREEN_SPACE" "$CODE" ;;
   esac
   check "meta form carries the same diagnosis" "$CODE" "$(w 21 '.result.diagnosis.code')"
   check "meta form still answers ok"           "true" "$(w 21 '.ok')"

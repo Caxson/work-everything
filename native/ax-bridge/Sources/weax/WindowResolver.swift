@@ -214,18 +214,25 @@ enum WindowResolver {
     /// An empty `AXWindows` has several causes with different remedies, and telling a
     /// caller only "no windows" makes it retry forever against the ones it cannot fix.
     ///
-    /// The distinguishing evidence is whether *anything else on the machine* is on screen.
-    /// When the desktop is compositing normally, one application with no on-screen window
-    /// is that application's problem. When nothing is on screen but the frontmost app, the
-    /// desktop itself is not drawing — measured with a screen saver running while the
-    /// session was still unlocked, which takes accessibility windows away from every
-    /// application exactly the way a lock does while reporting nothing at all.
+    /// The distinguishing evidence is whether *anything else on the machine* is on screen,
+    /// and — when something is — whether what is on screen is a full-screen application
+    /// holding the active Space. When the desktop is compositing normally, one application
+    /// with no on-screen window is that application's problem. When nothing anywhere is on
+    /// screen, the desktop itself is not drawing.
+    ///
+    /// The count of *owners* answers neither question. It used to stand in for "the desktop
+    /// is not compositing" at `<= 1`, which is precisely the reading a single full-screen
+    /// application produces — measured with Chrome full-screen and 飞书 on the other Space,
+    /// where it reported a machine that was drawing nothing while Chrome was drawing at
+    /// 1728x1003 and the person was actively typing. Owners are kept as detail and are no
+    /// longer evidence for anything.
     static func diagnoseEmpty(pid: pid_t, census: AXElement.ElementCensus?) -> BridgeError {
         if ScreenLock.isLocked { return BridgeError.screenLocked(detectedBy: "session") }
         let all = cgWindows(pid: pid)
         let onScreen = all.filter { $0.onScreen }
         let desktop = desktopCensus()
         let saverOnScreen = screenSaverOnScreen()
+        let space = SpaceCensus.read()
         var details: [String: JSONValue] = [
             "cgWindows": .int(all.count),
             "onScreen": .int(onScreen.count),
@@ -233,7 +240,8 @@ enum WindowResolver {
             "desktopOwnersOnScreen": .int(desktop.owners),
             // Always present, on both return paths, so absence of the key is never
             // ambiguous with a negative answer for a caller branching on it.
-            "screenSaverOnScreen": .bool(saverOnScreen)
+            "screenSaverOnScreen": .bool(saverOnScreen),
+            "space": space.json
         ]
         if let census = census { details["axWindows"] = census.json }
         guard !all.isEmpty, onScreen.isEmpty else {
@@ -244,23 +252,47 @@ enum WindowResolver {
                                    + "like this and it is not an error state to recover from",
                                details: .object(details))
         }
-        details["scope"] = .string(desktop.owners <= 1 ? "desktop" : "application")
-        // The screen saver is now checked rather than guessed at. It used to be offered as
-        // the explanation for `owners <= 1` on the strength of the symptom alone, which is
-        // the same mistake as matching the host process: a plausible cause asserted without
-        // a signal that distinguishes it.
+        // `desktop` now means what it says: nothing anywhere is on screen. A full-screen
+        // application is `application` scope, because the desktop is drawing — just not
+        // this Space.
+        details["scope"] = .string(desktop.windows == 0 ? "desktop" : "application")
+
+        // The screen saver is checked rather than guessed at. It used to be offered as the
+        // explanation for `owners <= 1` on the strength of the symptom alone, which is the
+        // same mistake as matching the host process: a plausible cause asserted without a
+        // signal that distinguishes it. The full-screen Space is checked the same way.
+        //
+        // Order matters, because more than one of these is true at once and the first
+        // answer is the one somebody acts on. A saver drawn over a full-screen Chrome
+        // satisfies the full-screen test as well — `AXFullScreen` is still set on a window
+        // nobody can see — so naming the Space there would hide the saver behind a cause
+        // that is merely also true. The most covering condition wins: saver, then a machine
+        // drawing nothing at all, then the Space, then the generic case.
         let cause: String
         if saverOnScreen {
             cause = "a screen saver is on screen and compositing over every application, with the session "
                 + "still unlocked. It takes accessibility windows away from all of them at once. Only real "
                 + "user activity clears it, and CGSSessionScreenIsLocked stays false throughout, so there is "
                 + "no password to go and find"
-        } else if desktop.owners <= 1 {
-            cause = "nothing on this machine is on screen except the frontmost application, so the desktop is "
-                + "not compositing. No screen saver is on screen, so something else is covering it. Only real "
-                + "user activity clears it, and CGSSessionScreenIsLocked stays false throughout"
+        } else if desktop.windows == 0 {
+            cause = "nothing at all is on screen anywhere on this machine, so the desktop is not compositing. "
+                + "No screen saver is on screen and the session is not locked, which leaves a sleeping "
+                + "display or a switched-out session. Only real user activity clears it"
+        } else if space.fullScreen {
+            return BridgeError(
+                code: "FULLSCREEN_SPACE",
+                message: "pid \(pid) exposes no accessibility window because the active Space belongs to a "
+                    + "full-screen application"
+                    + (space.frontmostApp.map { " (\($0))" } ?? "")
+                    + ". macOS does not composite windows that live on another Space, and accessibility "
+                    + "follows the compositor: every application on the other Space reads as having no "
+                    + "window. Nothing is wrong and retrying will not help — the action has to wait until "
+                    + "the person leaves full screen, or be run against an application on this Space. "
+                    + "Evidence: \(space.evidence.joined(separator: ", "))",
+                details: .object(details))
         } else {
-            cause = "this application's windows are on another space or otherwise not being drawn"
+            cause = "this application's windows are on another space or otherwise not being drawn, while "
+                + "\(desktop.windows) window(s) from \(desktop.owners) process(es) are on screen"
         }
         return BridgeError(
             code: "AX_SEES_NO_WINDOWS_BUT_CG_DOES",

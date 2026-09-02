@@ -40,10 +40,42 @@ const SAVER_IDLE: WindowDiagnosis = {
  * this signal directly only in the negative. Both sides fail safe — a miss
  * reads as the general "not being drawn" answer, and a false positive needs a
  * full-screen saver window on screen, which is the thing itself.
+ *
+ * `scope` is `application`, not `desktop`: the saver's own window is on screen,
+ * and the helper derives `desktop` from `desktopOnScreen == 0`. The verdict
+ * comes from `screenSaverOnScreen`, which is the point — it does not need the
+ * scope to agree with it.
  */
 const SAVER_ON_SCREEN: WindowDiagnosis = {
   code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
-  details: { cgWindows: 5, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'desktop', screenSaverOnScreen: true },
+  details: { cgWindows: 5, onScreen: 0, desktopOnScreen: 1, desktopOwnersOnScreen: 1, scope: 'application', screenSaverOnScreen: true },
+};
+
+/**
+ * A real `FULLSCREEN_SPACE` answer, verbatim. Chrome full-screen on one
+ * display with 飞书 on the Space behind it: 0 accessibility windows against 6
+ * known to the window server, and 3 windows from 1 process on screen — a
+ * desktop compositing perfectly well, which is why the owner count is evidence
+ * for nothing. Activating 飞书 gave it 1 addressable window at 1397x937 and
+ * returning to Chrome took it away again.
+ */
+const FULLSCREEN: WindowDiagnosis = {
+  code: 'FULLSCREEN_SPACE',
+  message:
+    'pid 68285 exposes no accessibility window because the active Space belongs to a full-screen application (Google Chrome). ' +
+    'macOS does not composite windows that live on another Space, and accessibility follows the compositor: every application ' +
+    'on the other Space reads as having no window. Nothing is wrong and retrying will not help — the action has to wait until ' +
+    'the person leaves full screen, or be run against an application on this Space. Evidence: AXFullScreen, currentSpaceType=4',
+  details: {
+    cgWindows: 6,
+    onScreen: 0,
+    desktopOnScreen: 3,
+    desktopOwnersOnScreen: 1,
+    screenSaverOnScreen: false,
+    scope: 'application',
+    space: { fullScreen: true, evidence: ['AXFullScreen', 'currentSpaceType=4'], spaces: 3, currentSpaceType: 4, frontmostApp: 'Google Chrome' },
+    axWindows: { entries: 0, real: 0, nonElement: 0, selfEqual: 0 },
+  },
 };
 
 function reading(overrides: Partial<HealthObservation> = {}): HealthObservation {
@@ -94,6 +126,64 @@ describe('the four reasons an app exposes no window', () => {
     expect(health.state).toBe('screen_locked');
     expect(health.detail).toContain('unlock');
     expect(health.detail).not.toContain('restart');
+  });
+
+  it('a full-screen Space: nothing is wrong, and nothing to do but wait', () => {
+    const health = classifyHealth(reading({ windows: [], diagnosis: FULLSCREEN }));
+    expect(health.state).toBe('fullscreen_space');
+    expect(health.detail).toContain('Google Chrome');
+    expect(health.detail).toContain('Nothing is wrong with the machine');
+    expect(health.detail).toContain('AXFullScreen, currentSpaceType=4');
+    // Every wrong reading of this state sends somebody to fix a working Mac.
+    expect(health.detail).not.toContain('restart');
+    expect(health.detail).not.toContain('unlock');
+    expect(health.detail).toContain('6 window(s) known to the window server, 0 on screen');
+  });
+
+  it('reads the Space out of the census when the code does not name it', () => {
+    // A helper that reports the census without having learned the code lands
+    // in the not-drawn branch, and the fact is honoured from there too.
+    const health = classifyHealth(
+      reading({
+        windows: [],
+        diagnosis: {
+          code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+          message: 'not drawn',
+          details: { ...FULLSCREEN.details, scope: 'application' },
+        },
+      }),
+    );
+    expect(health.state).toBe('fullscreen_space');
+    expect(health.detail).toContain('Google Chrome');
+  });
+
+  it('names no application when the private Space list was not available', () => {
+    // `frontmostApp` comes from a list a macOS may stop vending. Absence is not
+    // a negative, and it is not something to guess at either.
+    const health = classifyHealth(
+      reading({ windows: [], diagnosis: { code: 'FULLSCREEN_SPACE', details: { cgWindows: 6, onScreen: 0, space: { fullScreen: true, evidence: ['AXFullScreen'] } } } }),
+    );
+    expect(health.state).toBe('fullscreen_space');
+    expect(health.detail).toContain('a full-screen application');
+    expect(health.detail).toContain('Evidence: AXFullScreen');
+  });
+
+  it('leaves a census that looked at the Space and found none alone', () => {
+    // The same measured not-drawn payload, with the Space answered in the
+    // negative: `fullScreen: false` is a real answer and must not be read as
+    // one, and this stays the verdict it was before the Space existed.
+    const health = classifyHealth(
+      reading({
+        windows: [],
+        diagnosis: {
+          code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+          message: 'not drawn',
+          details: { cgWindows: 5, onScreen: 0, desktopOnScreen: 25, desktopOwnersOnScreen: 8, scope: 'application', screenSaverOnScreen: false, space: { fullScreen: false, evidence: [] } },
+        },
+      }),
+    );
+    expect(health.state).toBe('not_drawn');
+    expect(health.detail).toContain('another space');
   });
 
   it('rules the screen saver out when the helper says it is not on screen', () => {
@@ -173,10 +263,48 @@ describe('the four reasons an app exposes no window', () => {
     expect(health.detail).toBe('a cause learned later');
   });
 
+  it('never reports a full-screen Space from a reading that does not say so', () => {
+    // The screen saver shipped as a false positive because the predicate was
+    // only ever exercised on its true side. Every reading here is a machine
+    // that is not in a full-screen Space, and two of them carry a census that
+    // answered the question in the negative rather than not asking it.
+    const elsewhere = [
+      { windows: [{ role: 'AXWindow', title: '飞书' }], diagnosis: OK, state: 'ok' },
+      { windows: [], diagnosis: { code: 'SCREEN_LOCKED', message: 'locked' }, state: 'screen_locked' },
+      { windows: [], diagnosis: { code: 'NO_WINDOW', message: 'none', details: { cgWindows: 0, onScreen: 0 } }, state: 'no_window' },
+      { windows: [], diagnosis: SAVER_IDLE, state: 'not_drawn' },
+      { windows: [], diagnosis: SAVER_ON_SCREEN, state: 'desktop_blank' },
+      {
+        windows: [],
+        diagnosis: {
+          code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+          details: { cgWindows: 3, onScreen: 0, desktopOnScreen: 0, desktopOwnersOnScreen: 0, scope: 'desktop', screenSaverOnScreen: false },
+        },
+        state: 'desktop_blank',
+      },
+      {
+        windows: [],
+        diagnosis: {
+          code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES',
+          details: { cgWindows: 3, onScreen: 0, desktopOnScreen: 42, desktopOwnersOnScreen: 12, scope: 'application', space: { fullScreen: false, evidence: [] } },
+        },
+        state: 'not_drawn',
+      },
+      { windows: [], diagnosis: { code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', details: { cgWindows: 3, onScreen: 0, scope: 'application' } }, state: 'not_drawn' },
+    ] satisfies { windows: HealthObservation['windows']; diagnosis: WindowDiagnosis; state: string }[];
+
+    for (const entry of elsewhere) {
+      const health = classifyHealth(reading({ windows: entry.windows, diagnosis: entry.diagnosis }));
+      expect(health.state).toBe(entry.state);
+      expect(health.detail).not.toContain('full-screen');
+    }
+  });
+
   it('never escalates a diagnosed cause to wedged, however many times it repeats', () => {
     for (const diagnosis of [
       { code: 'SCREEN_LOCKED' },
       { code: 'NO_WINDOW' },
+      { code: 'FULLSCREEN_SPACE', details: { space: { fullScreen: true, evidence: ['AXFullScreen'] } } },
       { code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', details: { scope: 'desktop' } },
       { code: 'AX_SEES_NO_WINDOWS_BUT_CG_DOES', details: { scope: 'application' } },
     ] satisfies WindowDiagnosis[]) {
@@ -201,7 +329,7 @@ describe('the one thing that is actually wedged', () => {
   });
 
   it('names the states where trying again cannot help', () => {
-    expect([...FEISHU_STUCK_STATES].sort()).toEqual(['desktop_blank', 'not_drawn', 'screen_locked', 'wedged']);
+    expect([...FEISHU_STUCK_STATES].sort()).toEqual(['desktop_blank', 'fullscreen_space', 'not_drawn', 'screen_locked', 'wedged']);
   });
 });
 
@@ -250,6 +378,20 @@ describe('the health monitor', () => {
     });
     expect((await made.check()).state).toBe('screen_locked');
     expect(seen).toEqual(['screen_locked']);
+  });
+
+  it('reports a full-screen Space through the same channel', async () => {
+    // The channel the queue's sensor listens on. The sender consults health
+    // before it touches a driver, so for this state it is the only one.
+    const seen: string[] = [];
+    const made = new FeishuHealthMonitor({
+      pid: async () => PID,
+      windows: async () => ({ windows: [], diagnosis: FULLSCREEN }),
+      webAreas: async () => [],
+      onHealth: (health) => seen.push(health.state),
+    });
+    expect((await made.check()).state).toBe('fullscreen_space');
+    expect(seen).toEqual(['fullscreen_space']);
   });
 
   it('spawns nothing to reach a verdict', async () => {

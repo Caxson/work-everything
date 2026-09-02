@@ -165,14 +165,11 @@ final class BackgroundSession {
     }
 }
 
-/// Main-thread confined, like `ElementRegistry` — every op is dispatched there.
+/// Main-thread confined, like `ElementRegistry` — every op is dispatched there, and one
+/// registry belongs to one client (see `Connection`).
 final class SessionRegistry {
-    static let shared = SessionRegistry()
-
     private var nextId = 1
     private var sessions: [Int: BackgroundSession] = [:]
-
-    private init() {}
 
     func allocate() -> Int {
         defer { nextId += 1 }
@@ -189,7 +186,7 @@ final class SessionRegistry {
     @discardableResult
     func remove(_ id: Int) -> BackgroundSession? { sessions.removeValue(forKey: id) }
 
-    /// Called when the bridge shuts down: a suppression tap outliving the process that
+    /// Called when a client goes away: a suppression tap outliving the connection that
     /// installed it would leave somebody else's application filtered.
     func releaseAll() {
         for session in sessions.values where !session.released {

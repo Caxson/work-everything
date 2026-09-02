@@ -27,7 +27,7 @@ struct AXElement {
 
     static func systemWide() -> AXElement { AXElement(AXUIElementCreateSystemWide()) }
 
-    var nodeId: Int { ElementRegistry.shared.handle(for: ref) }
+    var nodeId: Int { ElementRegistry.current.handle(for: ref) }
 
     var pid: pid_t? {
         var pid: pid_t = 0
@@ -169,6 +169,18 @@ struct AXElement {
     func actionNames() -> [String] {
         var names: CFArray?
         guard AXUIElementCopyActionNames(ref, &names) == .success else { return [] }
+        return (names as? [String]) ?? []
+    }
+
+    /// What this element says it exposes.
+    ///
+    /// Worth asking for the same reason `actionNames` is: an attribute an element does not
+    /// advertise reads back as absent, which is indistinguishable from one it advertises and
+    /// has nothing in. A text field with an empty `AXValue` and an element with no value at
+    /// all are exactly that pair, and they call for opposite behaviour — see `ComposerCaret`.
+    func attributeNames() -> [String] {
+        var names: CFArray?
+        guard AXUIElementCopyAttributeNames(ref, &names) == .success else { return [] }
         return (names as? [String]) ?? []
     }
 

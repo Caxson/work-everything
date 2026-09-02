@@ -10,8 +10,8 @@
  * helper that stops answering must not strand the daemon; and the process is
  * never assumed to exist — a missing binary is reported as exactly that.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { Socket } from 'node:net';
 import type { Event } from '../../core/events.js';
 import type { Perceiver } from '../base.js';
 import type { AxApp, AxEnv, AxNode, AxNotification, AxOp, AxScreenState, AxSelector, WindowDiagnosis, WindowInfo, WindowReading } from './axProtocol.js';
@@ -23,10 +23,10 @@ import {
   WindowDiagnosisDetailsSchema,
   WindowInfoSchema,
   WindowReadingSchema,
-  createLineDecoder,
   decodeMessage,
   encodeRequest,
 } from './axProtocol.js';
+import { SocketTransport, SpawnTransport, type AxTransport, type AxTransportError } from './axTransport.js';
 import { z } from 'zod';
 
 export class AxBridgeError extends Error {
@@ -45,8 +45,22 @@ export interface AxBridgeConfig {
   /** Path to the `we-ax` binary produced by `native/ax-bridge`. */
   readonly binaryPath: string;
   readonly requestTimeoutMs: number;
+  /**
+   * Unix socket of a resident `we-ax` service. When set, this is the transport and the
+   * binary is never spawned.
+   *
+   * Preferred, and for an unattended agent effectively required. macOS attributes an
+   * Accessibility grant to the *responsible process*: a helper spawned as a child inherits
+   * the grant of whoever launched it, so the same binary is trusted from a terminal and
+   * untrusted from the daemon, and granting the binary itself changes nothing. A service
+   * under launchd is responsible for itself — granted once, by hand, and then usable by
+   * any caller that can open this socket. See `native/ax-bridge/scripts/install-service.sh`.
+   */
+  readonly socketPath?: string | undefined;
   /** Injectable so tests can drive a stand-in helper over real pipes. */
   readonly spawnFn?: (binaryPath: string) => ChildProcessWithoutNullStreams;
+  /** Injectable so tests can point the socket transport at a server they control. */
+  readonly connectFn?: (socketPath: string) => Socket;
 }
 
 export const DEFAULT_AX_TIMEOUT_MS = 10_000;
@@ -118,71 +132,80 @@ interface Pending {
   readonly timer: NodeJS.Timeout;
 }
 
+/**
+ * Transport faults reach callers as `AxBridgeError`, keeping one error type on this side
+ * of the pipe. The code is carried through unchanged: `binary_missing` and
+ * `service_unavailable` name different remedies and a caller that collapses them tells
+ * somebody to build a binary they already have.
+ */
+function fromTransport(error: unknown): AxBridgeError {
+  if (error instanceof AxBridgeError) return error;
+  const transport = error as Partial<AxTransportError>;
+  if (typeof transport?.code === 'string' && typeof transport.message === 'string') {
+    return new AxBridgeError(transport.message, transport.code);
+  }
+  return new AxBridgeError(error instanceof Error ? error.message : String(error), 'bridge_error');
+}
+
 export class AxBridgeClient {
-  private child: ChildProcessWithoutNullStreams | undefined;
+  private transport: AxTransport | undefined;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Set<(notification: AxNotification) => void>();
-  private stderrTail = '';
 
   constructor(private readonly config: AxBridgeConfig) {}
 
   get running(): boolean {
-    return this.child !== undefined;
+    return this.transport !== undefined;
   }
 
   /**
-   * Start the helper. A missing binary is the common case on a fresh
-   * checkout, so it gets its own message rather than an ENOENT from spawn.
+   * Open the channel to the helper — a resident service when `socketPath` is configured,
+   * a spawned child otherwise.
+   *
+   * The choice is the caller's and is made once here, not per request: the two differ in
+   * who holds the Accessibility grant, so silently swapping one for the other would change
+   * whether the daemon can see anything at all, without saying so.
    */
   start(): void {
-    if (this.child !== undefined) return;
-    if (this.config.spawnFn === undefined && !existsSync(this.config.binaryPath)) {
-      throw new AxBridgeError(
-        `ax bridge binary not found at ${this.config.binaryPath}. Build it from native/ax-bridge, or set axBridge.binaryPath in the config.`,
-        'binary_missing',
-      );
+    if (this.transport !== undefined) return;
+    const transport = this.makeTransport();
+    // Assigned before `start`, because a transport that fails immediately calls back into
+    // `failAll` and a half-registered client would swallow the reason.
+    this.transport = transport;
+    try {
+      transport.start({
+        onLine: (line) => this.handleLine(line),
+        onFail: (error) => {
+          this.transport = undefined;
+          this.failAll(fromTransport(error));
+        },
+      });
+    } catch (error) {
+      this.transport = undefined;
+      throw fromTransport(error);
     }
+  }
 
-    const child = this.config.spawnFn?.(this.config.binaryPath) ?? spawn(this.config.binaryPath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
-    this.child = child;
-
-    const decode = createLineDecoder();
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      for (const line of decode(chunk)) this.handleLine(line);
-    });
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      this.stderrTail = `${this.stderrTail}${chunk}`.slice(-2000);
-    });
-    child.on('error', (error) => this.failAll(new AxBridgeError(`ax bridge failed to start: ${error.message}`, 'spawn_failed')));
-    child.on('close', (code) => {
-      this.child = undefined;
-      const detail = this.stderrTail.trim().split('\n').slice(-1)[0] ?? '';
-      this.failAll(new AxBridgeError(`ax bridge exited (${code ?? -1})${detail === '' ? '' : `: ${detail}`}`, 'bridge_exited'));
-    });
+  private makeTransport(): AxTransport {
+    const socketPath = this.config.socketPath;
+    if (socketPath !== undefined && socketPath !== '') {
+      return new SocketTransport({ socketPath, connectFn: this.config.connectFn });
+    }
+    return new SpawnTransport({ binaryPath: this.config.binaryPath, spawnFn: this.config.spawnFn });
   }
 
   async stop(): Promise<void> {
-    const child = this.child;
-    this.child = undefined;
+    const transport = this.transport;
+    this.transport = undefined;
     this.failAll(new AxBridgeError('ax bridge stopped', 'stopped'));
-    if (child === undefined) return;
-    await new Promise<void>((resolve) => {
-      child.once('close', () => resolve());
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        child.kill('SIGKILL');
-        resolve();
-      }, 1000).unref?.();
-    });
+    await transport?.stop();
   }
 
   /** Send one op and await its correlated reply. */
   request(op: AxOp, params: Readonly<Record<string, unknown>> = {}): Promise<unknown> {
-    const child = this.child;
-    if (child === undefined) return Promise.reject(new AxBridgeError('ax bridge is not running', 'not_running'));
+    const transport = this.transport;
+    if (transport === undefined) return Promise.reject(new AxBridgeError('ax bridge is not running', 'not_running'));
 
     const id = this.nextId++;
     return new Promise<unknown>((resolve, reject) => {
@@ -191,11 +214,7 @@ export class AxBridgeClient {
         reject(new AxBridgeError(`op '${op}' timed out after ${this.config.requestTimeoutMs}ms`, 'timeout'));
       }, this.config.requestTimeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(encodeRequest(id, op, params), (error) => {
-        if (error) {
-          this.settle(id, undefined, new AxBridgeError(`write failed: ${error.message}`, 'write_failed'));
-        }
-      });
+      transport.write(encodeRequest(id, op, params), (error) => this.settle(id, undefined, fromTransport(error)));
     });
   }
 

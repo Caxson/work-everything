@@ -33,7 +33,7 @@ enum BackgroundOps {
     /// would give up the one capability a lock leaves standing.
     static func aim(_ request: Request) throws -> Aim {
         if let sessionId = request.params["session"]?.intValue {
-            let session = try SessionRegistry.shared.session(for: sessionId)
+            let session = try SessionRegistry.current.session(for: sessionId)
             let fields = request.params["fields"].map { DispatchFields.parse($0) } ?? session.fields
             guard let override = request.params["windowNumber"]?.intValue, override != session.windowNumber else {
                 return Aim(session: session, target: session.target, fields: fields, window: nil)
@@ -174,11 +174,11 @@ enum BackgroundOps {
                                   windowIndex: request.params["windowIndex"]?.intValue)
         let previous = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let suppressor = try makeSuppressor(request, pid: pid, previous: previous)
-        let session = BackgroundSession(id: SessionRegistry.shared.allocate(), pid: pid,
+        let session = BackgroundSession(id: SessionRegistry.current.allocate(), pid: pid,
                                         windowNumber: resolved.0.windowNumber, frame: resolved.0.frame,
                                         fields: DispatchFields.parse(request.params["fields"]),
                                         previousPID: previous, suppressor: suppressor)
-        SessionRegistry.shared.store(session)
+        SessionRegistry.current.store(session)
 
         return try Invariants.around {
             if request.bool("activate", default: false) {
@@ -207,9 +207,9 @@ enum BackgroundOps {
 
     static func bgRelease(_ request: Request) throws -> JSONValue {
         let id = try request.requireInt("session")
-        let session = try SessionRegistry.shared.session(for: id)
+        let session = try SessionRegistry.current.session(for: id)
         let report = session.release(restoreFocus: request.bool("restore", default: true))
-        SessionRegistry.shared.remove(id)
+        SessionRegistry.current.remove(id)
         return report
     }
 
@@ -217,7 +217,7 @@ enum BackgroundOps {
 
     static func focusAndType(_ request: Request) throws -> JSONValue {
         let nodeId = try request.requireInt("nodeId")
-        let element = AXElement(try ElementRegistry.shared.element(for: nodeId))
+        let element = AXElement(try ElementRegistry.current.element(for: nodeId))
         let text = try request.requireString("text")
         let aim = try aim(request)
         let dryRun = request.bool("dryRun", default: false)
@@ -227,13 +227,21 @@ enum BackgroundOps {
                                                   point: point(request.params["safePoint"]), fields: aim.fields)
         }
 
-        let perCharacter = UInt32(max(0, request.int("perCharacterMs", default: 4)) * 1000)
+        let defaultPerCharacterMs = Int(BackgroundInput.perCharacterMicroseconds) / 1000
+        let perCharacter = UInt32(max(0, request.int("perCharacterMs", default: defaultPerCharacterMs)) * 1000)
+        let caretBudget = ComposerCaret.Budget(
+            timeoutMs: min(30_000, max(0, request.int("caretTimeoutMs",
+                                                      default: ComposerCaret.Budget.default.timeoutMs))),
+            pollMs: max(1, request.int("caretPollMs", default: ComposerCaret.Budget.default.pollMs)))
         let strategy = try FocusStrategy.parse(request.string("focusVia"))
         let body = {
             try HybridInput.focusAndType(element: element, nodeId: nodeId, text: text, target: aim.target,
                                          focusAction: request.string("focusAction") ?? kAXPressAction,
                                          strategy: strategy, fields: aim.fields,
-                                         perCharacterMicroseconds: perCharacter, dryRun: dryRun)
+                                         perCharacterMicroseconds: perCharacter,
+                                         caretBudget: caretBudget,
+                                         recoverCaret: request.bool("caretRecovery", default: true),
+                                         dryRun: dryRun)
         }
         return dryRun ? try body() : try Invariants.around(body)
     }

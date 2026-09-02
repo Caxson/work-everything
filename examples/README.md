@@ -20,6 +20,36 @@ answer is printed to the terminal and recorded as a pending confirmation
 (`we status` lists them) instead of being sent. Both lists default to empty, so
 an unconfigured daemon watches nothing and writes nowhere.
 
+### `axBridge`: spawning the helper, or connecting to one
+
+As shipped, this config points `axBridge.binaryPath` at the freshly built helper
+and the daemon spawns it. That works when *you* start the daemon from a terminal
+whose owning app already has Accessibility permission, and only then — macOS
+attributes the grant to the **responsible process**, which for a spawned helper
+is whoever launched it. Start the daemon from anywhere else and the same binary
+reports `trusted: false`, and granting `we-ax` in System Settings does not help,
+because the grant being consulted was never its own.
+
+For anything unattended, install the helper as a launchd agent instead and point
+the config at its socket:
+
+```bash
+bash native/ax-bridge/scripts/install-service.sh
+```
+
+```jsonc
+"axBridge": {
+  "socketPath": "/Users/you/Library/Application Support/work-everything/we-ax.sock",
+  "requestTimeoutMs": 15000
+}
+```
+
+The service is then responsible for itself: you grant it once, by hand — the
+installer prints the exact path and the command that makes it take effect — and
+every caller that can open the socket borrows that grant. `socketPath` wins over
+`binaryPath` when both are set; `WORK_EVERYTHING_AX_SOCKET` sets it from the
+environment.
+
 ### The `feishu-ping` scenario
 
 The muscle-tier example. `we ping` in a watched conversation is answered with

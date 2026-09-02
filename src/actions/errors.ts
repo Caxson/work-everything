@@ -2,12 +2,12 @@
  * One error type for the whole action layer, with a machine-readable code.
  *
  * The codes exist so callers can decide whether to try again, and the
- * important one is `SCREEN_LOCKED`. A locked Mac makes every GUI app look
- * broken through the accessibility API: windows stop being addressable, trees
- * come back empty, and an executor that treats that as a transient fault
- * retries forever against something only a person can undo — and, worse,
- * invites a "restart the app" remedy for a machine that is working fine.
- * So locked is terminal here, by construction, not by convention.
+ * important ones are `SCREEN_LOCKED` and `FULLSCREEN_SPACE`. Both make every
+ * GUI app look broken through the accessibility API: windows stop being
+ * addressable, trees come back empty, and an executor that treats that as a
+ * transient fault retries forever against something only a person can undo —
+ * and, worse, invites a "restart the app" remedy for a machine that is working
+ * fine. So both are terminal here, by construction, not by convention.
  */
 export const ACTION_ERROR_CODES = [
   /** Arguments failed their schema. */
@@ -26,6 +26,12 @@ export const ACTION_ERROR_CODES = [
   'TREE_NOT_READY',
   /** The screen is locked. Terminal: only a person changes this. */
   'SCREEN_LOCKED',
+  /**
+   * A full-screen application owns the active Space, so no application on any
+   * other Space has a window to address. Terminal for the same reason: it ends
+   * when the person leaves full screen, and not before.
+   */
+  'FULLSCREEN_SPACE',
   /** Accessibility permission has not been granted. Terminal. */
   'NOT_TRUSTED',
   /** The verified write path into web content is not available. Terminal. */
@@ -81,6 +87,7 @@ export const TERMINAL_ACTION_CODES: ReadonlySet<ActionErrorCode> = new Set<Actio
   'STALE_SNAPSHOT',
   'UNKNOWN_ELEMENT',
   'SCREEN_LOCKED',
+  'FULLSCREEN_SPACE',
   'NOT_TRUSTED',
   'HYBRID_ROUTE_UNAVAILABLE',
   'UNSUPPORTED_ACTION',
@@ -102,6 +109,7 @@ function bridgeCode(error: unknown): string {
 
 const BRIDGE_CODE_MAP: Readonly<Record<string, ActionErrorCode>> = {
   SCREEN_LOCKED: 'SCREEN_LOCKED',
+  FULLSCREEN_SPACE: 'FULLSCREEN_SPACE',
   NOT_TRUSTED: 'NOT_TRUSTED',
   not_trusted: 'NOT_TRUSTED',
   NO_SUCH_PID: 'APP_NOT_RUNNING',
@@ -116,6 +124,9 @@ const BRIDGE_CODE_MAP: Readonly<Record<string, ActionErrorCode>> = {
  *
  * `SCREEN_LOCKED` gets a message that says what to do about it, because the
  * person reading it in a log needs to know the daemon is not broken.
+ * `FULLSCREEN_SPACE` keeps the helper's own words instead: they name the
+ * application holding the Space and the evidence for it, which is more than
+ * this side knows.
  */
 export function toActionError(error: unknown, context: string): ActionError {
   if (error instanceof ActionError) return error;

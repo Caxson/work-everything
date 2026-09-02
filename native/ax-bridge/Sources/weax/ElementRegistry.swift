@@ -8,18 +8,18 @@ private struct ElementKey: Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(CFHash(ref)) }
 }
 
-/// Maps opaque, process-local integer handles to live AXUIElement references.
+/// Maps opaque, connection-local integer handles to live AXUIElement references.
 /// Confined to the main thread (every op is dispatched there), so no locking.
+///
+/// One registry per client, not per process — see `Connection`. A handle is only ever
+/// meaningful to the connection that minted it, and two clients numbering from 1 in
+/// parallel must never resolve each other's elements.
 final class ElementRegistry {
-    static let shared = ElementRegistry()
-
     private var nextId = 1
     private var byId: [Int: AXUIElement] = [:]
     private var idByElement: [ElementKey: Int] = [:]
 
-    private init() {}
-
-    /// Stable: the same AXUIElement always gets the same nodeId within one process.
+    /// Stable: the same AXUIElement always gets the same nodeId within one connection.
     @discardableResult
     func handle(for element: AXUIElement) -> Int {
         let key = ElementKey(ref: element)

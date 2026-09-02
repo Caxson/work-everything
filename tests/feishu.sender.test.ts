@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AxBridgeClient } from '../src/perception/macos/axBridge.js';
 import { FeishuReader, feishuHealthMonitor } from '../src/perception/feishu/reader.js';
+import type { FeishuHealth } from '../src/perception/feishu/health.js';
 import { ChatRouteTable } from '../src/perception/feishu/chatRoutes.js';
 import { SentLedger } from '../src/perception/feishu/sentLedger.js';
 import { FeishuExecutor, FEISHU_REPLY_TOOL } from '../src/execution/feishu/sender.js';
@@ -31,6 +32,8 @@ interface Rig {
   readonly routes: ChatRouteTable;
   readonly ledger: SentLedger;
   readonly client: AxBridgeClient;
+  /** Every verdict the monitor reported: the channel the queue listens on. */
+  readonly health: FeishuHealth[];
   /** Every op the fake bridge was asked to perform, in order. */
   readonly log: LogEntry[];
   setNow: (ms: number) => void;
@@ -78,7 +81,11 @@ function rig(
   const reader = new FeishuReader(client, { bundleId: FEISHU, appPath: '/Applications/Lark.app', selfName: SELF_CHAT, now: () => now });
   const routes = new ChatRouteTable();
   const ledger = new SentLedger();
-  const monitor = feishuHealthMonitor(client, reader, { config: { wedgedAfter: options.wedgedAfter ?? 3 } });
+  const health: FeishuHealth[] = [];
+  const monitor = feishuHealthMonitor(client, reader, {
+    config: { wedgedAfter: options.wedgedAfter ?? 3 },
+    onHealth: (verdict) => health.push(verdict),
+  });
 
   const snapshots = new SnapshotStore();
   const actions = new ActionRegistry([
@@ -113,7 +120,7 @@ function rig(
     ...(options.realTime === true ? {} : { now: () => now, sleep: async (): Promise<void> => undefined }),
   });
 
-  return { executor, routes, ledger, client, log, setNow: (ms) => (now = ms) };
+  return { executor, routes, ledger, client, health, log, setNow: (ms) => (now = ms) };
 }
 
 /** Anything that could reach the app as input. Reads are not in here. */
@@ -301,6 +308,24 @@ describe('feishu.reply', () => {
     expect(seen).toBeUndefined();
     expect(result?.ok).toBe(false);
     expect(result?.error).toContain('locked');
+  });
+
+  it('keeps the FULLSCREEN_SPACE code, and reaches the queue through the health verdict', async () => {
+    // The send path never touches a driver before this check, so the action
+    // layer's error channel does not see this state at all: the verdict is how
+    // the queue's sensor hears it. A plain Error here, or a verdict nobody is
+    // told about, is a reply that fails instead of waiting for a person to
+    // leave full screen.
+    const { executor, health, log } = rig({ env: { FAKE_WINDOW_DIAGNOSIS: 'FULLSCREEN_SPACE' } });
+    const result = await executor.run(FEISHU_REPLY_TOOL, { text: 'hello', chat: SELF_CHAT });
+
+    expect(result.ok).toBe(false);
+    expect(health.map((verdict) => verdict.state)).toEqual(['fullscreen_space']);
+    expect(result.error).toContain('Google Chrome');
+    expect(result.error).toContain('full-screen application');
+    // Nothing was typed, and nothing suggests fixing an application that is fine.
+    expect(inputs(log)).toEqual([]);
+    expect(result.error).not.toContain('restart');
   });
 
   it('rejects an empty reply', async () => {
